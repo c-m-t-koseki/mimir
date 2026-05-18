@@ -168,6 +168,7 @@ impl InputMethodEngine {
     /// Create with configuration
     pub fn with_config(config: EngineConfig) -> Self {
         Self {
+            live: LiveConversion::new(config.live_conversion),
             config,
             ..Self::new()
         }
