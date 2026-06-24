@@ -72,6 +72,11 @@ pub struct EngineConfig {
     pub display_context_len: usize,
     /// Maximum context length for API calls (to avoid overflow)
     pub max_api_context_len: usize,
+    /// Maximum reading length (chars) converted by the model in a single call.
+    /// The composing buffer is split into chunks of at most this many chars so
+    /// live-conversion latency stays bounded for long input. See
+    /// [`ComposingChunk`] and `chunked_auto_suggest`.
+    pub composing_chunk_len: usize,
     /// Token count threshold for beam search (at or below → beam, above → greedy)
     pub short_input_threshold: usize,
     /// Beam width for short input
@@ -97,6 +102,7 @@ impl EngineConfig {
             } else {
                 0
             },
+            composing_chunk_len: settings.conversion.composing_chunk_len,
             short_input_threshold: settings.conversion.short_input_threshold,
             beam_width: settings.conversion.beam_width,
             max_latency_ms: settings.conversion.max_latency_ms,
@@ -112,6 +118,7 @@ impl Default for EngineConfig {
             num_candidates: 3, // Space conversion: beam search with 3 candidates
             display_context_len: 10,
             max_api_context_len: 10,
+            composing_chunk_len: 30,
             short_input_threshold: 10,
             beam_width: 3,
             max_latency_ms: 100,
@@ -150,6 +157,28 @@ pub(crate) enum InputMode {
     /// `:`-prefixed input from the candidate-build pipeline and surfaces
     /// emoji candidates as the user types.
     Emoji,
+}
+
+/// One internal chunk of the composing buffer (at most
+/// `EngineConfig::composing_chunk_len` reading chars) together with its cached
+/// model conversion.
+///
+/// Chunks are an internal optimization only — the user always sees the
+/// concatenation of every chunk's `converted` text as one continuous preedit;
+/// there are no visible bunsetsu boundaries. Splitting the reading bounds each
+/// model call to N chars so live-conversion latency stays flat for long input.
+///
+/// The left context (lctx) a chunk was converted with is *not* stored: it is
+/// just the editor surrounding text plus the `converted` text of the preceding
+/// chunks, so it is derived on demand via `chunk_lctx` instead of duplicated
+/// here.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(in crate::core) struct ComposingChunk {
+    /// Hiragana reading for this chunk (≤ N chars).
+    pub reading: String,
+    /// Model conversion of `reading` — this chunk's slice of the live preedit.
+    /// Falls back to `reading` when the model yields nothing.
+    pub converted: String,
 }
 
 /// Live conversion state: enabled flag and current converted text

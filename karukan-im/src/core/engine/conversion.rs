@@ -1,4 +1,5 @@
-//! Conversion state handling (candidates, segments, commit)
+//! Conversion state handling (candidates, commit). The live-conversion
+//! chunking lives in the sibling `chunk` module.
 
 use std::collections::HashSet;
 use std::time::Instant;
@@ -75,7 +76,16 @@ impl InputMethodEngine {
     /// model is trained on kana → kanji and hallucinates garbage (e.g. `「` → `w`)
     /// for symbol- or alphabet-only inputs. Rule-based variants from
     /// `SymbolRewriter` cover those cases instead.
-    fn run_kana_kanji_conversion(&mut self, reading: &str, num_candidates: usize) -> Vec<String> {
+    ///
+    /// `api_context` is the left context (lctx) fed to the model. Callers pass
+    /// `truncate_context_for_api()` for a whole-buffer conversion, or — for
+    /// chunked live conversion — the converted text of the preceding chunks.
+    pub(super) fn run_kana_kanji_conversion(
+        &mut self,
+        reading: &str,
+        api_context: &str,
+        num_candidates: usize,
+    ) -> Vec<String> {
         if !karukan_engine::contains_kana(reading) {
             return vec![];
         }
@@ -83,7 +93,6 @@ impl InputMethodEngine {
             return vec![];
         };
         let katakana = karukan_engine::hiragana_to_katakana(reading);
-        let api_context = self.truncate_context_for_api();
         let main_model_name = converter.model_display_name().to_string();
 
         let strategy = self.determine_strategy(reading, num_candidates);
@@ -103,12 +112,12 @@ impl InputMethodEngine {
                 let (default_top1, light_candidates) = std::thread::scope(|s| {
                     let h_default = s.spawn(|| {
                         converter
-                            .convert(&katakana, &api_context, 1)
+                            .convert(&katakana, api_context, 1)
                             .unwrap_or_default()
                     });
                     let h_beam = s.spawn(|| {
                         light_converter
-                            .convert(&katakana, &api_context, bw)
+                            .convert(&katakana, api_context, bw)
                             .unwrap_or_default()
                     });
                     (
@@ -123,14 +132,14 @@ impl InputMethodEngine {
                     return vec![];
                 };
                 light_converter
-                    .convert(&katakana, &api_context, 1)
+                    .convert(&katakana, api_context, 1)
                     .unwrap_or_default()
             }
             ConversionStrategy::MainModelOnly => converter
-                .convert(&katakana, &api_context, 1)
+                .convert(&katakana, api_context, 1)
                 .unwrap_or_default(),
             ConversionStrategy::MainModelBeam { beam_width } => converter
-                .convert(&katakana, &api_context, *beam_width)
+                .convert(&katakana, api_context, *beam_width)
                 .unwrap_or_default(),
         };
 
@@ -159,27 +168,6 @@ impl InputMethodEngine {
         };
 
         candidates
-    }
-
-    /// Run inference for auto-suggest and return candidates (raw strings).
-    /// Initializes the kanji converter lazily. Falls back to the reading itself
-    /// if no candidates are produced.
-    pub(super) fn run_auto_suggest(&mut self, reading: &str, num_candidates: usize) -> Vec<String> {
-        // Ensure kanji converter is initialized
-        if self.converters.kanji.is_none()
-            && let Err(e) = self.init_kanji_converter()
-        {
-            debug!("Failed to initialize kanji converter: {}", e);
-            return vec![reading.to_string()];
-        }
-
-        let candidates = self.run_kana_kanji_conversion(reading, num_candidates);
-
-        if candidates.is_empty() {
-            vec![reading.to_string()]
-        } else {
-            candidates
-        }
     }
 
     /// Start kanji conversion for the current input buffer.
@@ -360,7 +348,8 @@ impl InputMethodEngine {
             debug!("Failed to initialize kanji converter: {}", e);
         }
 
-        let candidates = self.run_kana_kanji_conversion(reading, num_candidates);
+        let api_context = self.truncate_context_for_api();
+        let candidates = self.run_kana_kanji_conversion(reading, &api_context, num_candidates);
 
         let hiragana = reading.to_string();
         let katakana = karukan_engine::hiragana_to_katakana(reading);

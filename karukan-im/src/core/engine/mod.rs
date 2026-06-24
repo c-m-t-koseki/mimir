@@ -3,6 +3,7 @@
 //! This module contains the main `InputMethodEngine` struct that coordinates between
 //! the romaji converter, kanji converter, and manages the IME state.
 
+mod chunk;
 mod conversion;
 mod cursor;
 mod display;
@@ -142,6 +143,12 @@ pub struct InputMethodEngine {
     input_buf: InputBuffer,
     /// Live conversion state
     live: LiveConversion,
+    /// Internal chunking of the composing buffer used by
+    /// `chunked_auto_suggest`: a cache of the per-chunk model conversions.
+    /// Re-chunking diffs the new buffer against this by common prefix/suffix so
+    /// a keystroke only reconverts the chunk it touched, not the whole buffer.
+    /// Empty when not composing.
+    chunks: Vec<ComposingChunk>,
     /// Dictionaries (system, user)
     dicts: Dictionaries,
     /// Learning cache (user conversion history)
@@ -166,6 +173,7 @@ impl InputMethodEngine {
             pre_emoji_mode: None,
             input_buf: InputBuffer::new(),
             live: LiveConversion::default(),
+            chunks: Vec::new(),
             dicts: Dictionaries::default(),
             learning: None,
         }
@@ -238,6 +246,7 @@ impl InputMethodEngine {
         self.pre_emoji_mode = None;
         self.input_buf.clear();
         self.live.text.clear();
+        self.chunks.clear();
         self.metrics = ConversionMetrics::default();
     }
 
@@ -258,6 +267,13 @@ impl InputMethodEngine {
         if self.build_input_display().is_empty() {
             self.state = InputState::Empty;
             self.input_buf.clear();
+            // Erasing the whole buffer ends the composition: drop the live
+            // conversion text and the chunk cache so neither leaks into the
+            // next composing session (build_composing_preedit would otherwise
+            // render a stale live.text, and the chunk cache would be diffed
+            // against a buffer it no longer matches).
+            self.live.text.clear();
+            self.chunks.clear();
             // Emoji mode is per-session and bound to the typed `:` —
             // if the user erased back to an empty buffer, the session
             // is over. Restore whatever mode the user was in before

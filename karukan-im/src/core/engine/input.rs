@@ -26,22 +26,22 @@ impl InputMethodEngine {
             return EngineResult::consumed().with_action(EngineAction::UpdatePreedit(preedit));
         }
 
-        // Run auto-suggest. Normally skipped in alphabet mode (raw latin has no
-        // hiragana to convert), but if the buffer still contains kana — e.g. the
-        // user typed hiragana, switched to alphabet mode, and kept typing — keep
-        // converting the mixed reading so live conversion stays alive.
+        // Run auto-suggest via chunked conversion. Normally skipped in alphabet
+        // mode (raw latin has no hiragana to convert), but if the buffer still
+        // contains kana — e.g. the user typed hiragana, switched to alphabet mode,
+        // and kept typing — keep converting the mixed reading so live conversion
+        // stays alive. `chunked_auto_suggest` splits long input into
+        // bounded-length chunks so per-keystroke latency stays flat; for input
+        // within one chunk this is identical to a whole-buffer call.
         let convert = !self.input_buf.text.is_empty()
             && (self.input_mode != InputMode::Alphabet
                 || karukan_engine::contains_kana(&self.input_buf.text));
         let candidates = if convert {
             let reading = self.input_buf.text.clone();
-            let result = self.run_auto_suggest(&reading, 1);
-            if !result.is_empty() && result[0] != self.input_buf.text {
-                Some((result, reading))
-            } else {
-                None
-            }
+            self.chunked_auto_suggest()
+                .map(|converted| (vec![converted], reading))
         } else {
+            self.chunks.clear();
             None
         };
 
@@ -418,6 +418,7 @@ impl InputMethodEngine {
             self.state = InputState::Empty;
             self.input_buf.clear();
             self.live.text.clear();
+            self.chunks.clear();
             return EngineResult::consumed()
                 .with_action(EngineAction::HideCandidates)
                 .with_action(EngineAction::HideAuxText);
@@ -434,6 +435,7 @@ impl InputMethodEngine {
         self.converters.romaji.reset();
         self.input_buf.clear();
         self.live.text.clear();
+        self.chunks.clear();
         self.state = InputState::Empty;
         self.exit_emoji_mode();
 
@@ -478,6 +480,7 @@ impl InputMethodEngine {
         self.converters.romaji.reset();
         self.input_buf.clear();
         self.live.text.clear();
+        self.chunks.clear();
         self.state = InputState::Empty;
         // Emoji mode is per-session: leaving it returns the user to
         // whatever mode they were in before typing `:` so their next
