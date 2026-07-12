@@ -533,10 +533,11 @@ impl InputMethodEngine {
     /// preedit/candidate-window teardown.
     pub fn commit_result(&mut self) -> EngineResult {
         let text = self.commit();
-        let mut result =
-            EngineResult::consumed().with_action(EngineAction::UpdatePreedit(Preedit::new()));
+        let mut result = EngineResult::consumed();
         if !text.is_empty() {
             result = result.with_action(EngineAction::Commit(text));
+        } else {
+            result = result.with_action(EngineAction::UpdatePreedit(Preedit::new()));
         }
         result
             .with_action(EngineAction::HideCandidates)
