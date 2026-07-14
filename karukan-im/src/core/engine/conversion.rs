@@ -386,7 +386,7 @@ impl InputMethodEngine {
             // after rewriters have run — otherwise `:smile` would be
             // pinned to the top of the candidate list as a Fallback
             // and outrank the 😄 we surface in step 5/6.
-            if builder.is_empty() && self.input_mode != InputMode::Emoji {
+            if builder.is_empty() && self.mode.current() != InputMode::Emoji {
                 builder.push(AnnotatedCandidate::new(
                     hiragana.clone(),
                     CandidateSource::Fallback,
@@ -420,7 +420,7 @@ impl InputMethodEngine {
             .converters
             .rewriters
             .rewrite_all(&[reading.to_string()]);
-        if self.input_mode == InputMode::Emoji {
+        if self.mode.current() == InputMode::Emoji {
             for (variant, description) in rewriter_variants {
                 builder.push(
                     AnnotatedCandidate::new(variant, CandidateSource::Rewriter)
@@ -643,7 +643,7 @@ impl InputMethodEngine {
         // Skip learning when the buffer is a `:shortcode` query — the
         // reading would be e.g. `:smile`, which isn't a hiragana key
         // and would corrupt the kana-keyed learning cache.
-        if self.input_mode != InputMode::Emoji
+        if self.mode.current() != InputMode::Emoji
             && let Some(reading) = &reading
         {
             self.record_learning(reading, &text);
@@ -651,8 +651,7 @@ impl InputMethodEngine {
 
         self.state = InputState::Empty;
         self.input_buf.text.clear();
-        self.exit_emoji_mode();
-        self.exit_alphabet_mode();
+        self.mode.exit_temporary();
 
         EngineResult::consumed()
             .with_action(EngineAction::HideCandidates)
@@ -666,7 +665,7 @@ impl InputMethodEngine {
             return EngineResult::not_consumed();
         };
 
-        if self.input_mode != InputMode::Emoji
+        if self.mode.current() != InputMode::Emoji
             && let Some(reading) = &reading
         {
             self.record_learning(reading, &text);
@@ -674,8 +673,7 @@ impl InputMethodEngine {
 
         self.state = InputState::Empty;
         self.input_buf.text.clear();
-        self.exit_emoji_mode();
-        self.exit_alphabet_mode();
+        self.mode.exit_temporary();
 
         // Start new input with the character
         let new_input_result = self.start_input(ch);

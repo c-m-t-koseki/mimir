@@ -183,7 +183,7 @@ fn test_alphabet_mode_with_kana_keeps_converting() {
     // "あ" then Shift+letter switches into alphabet mode -> buffer "あA"
     engine.process_key(&press('a'));
     engine.process_key(&press_shift('A'));
-    assert!(engine.input_mode == InputMode::Alphabet);
+    assert!(engine.mode.current() == InputMode::Alphabet);
     assert!(karukan_engine::contains_kana(&engine.input_buf.text));
 
     // Simulate a previous live conversion result lingering on screen.
@@ -210,7 +210,7 @@ fn test_alphabet_mode_pure_latin_preserves_live_text() {
     // Enter alphabet mode with pure latin "Ab".
     engine.process_key(&press_shift('A'));
     engine.process_key(&press('b'));
-    assert!(engine.input_mode == InputMode::Alphabet);
+    assert!(engine.mode.current() == InputMode::Alphabet);
     assert!(!karukan_engine::contains_kana(&engine.input_buf.text));
 
     engine.live.text = "AB".to_string();

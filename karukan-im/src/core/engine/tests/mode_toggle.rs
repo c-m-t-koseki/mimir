@@ -8,13 +8,13 @@ fn test_mode_toggle_key_switches_alphabet_to_hiragana() {
 
     // Enter alphabet mode via Shift+A
     engine.process_key(&press_shift('A'));
-    assert!(engine.input_mode == InputMode::Alphabet);
+    assert!(engine.mode.current() == InputMode::Alphabet);
 
     // Alt_R press → switch to hiragana mode (mid-composition; the toggle key
     // is the explicit way out, independent of the per-word auto-revert)
     let result = engine.process_key(&press_key(Keysym::ALT_R));
     assert!(result.consumed);
-    assert!(engine.input_mode != InputMode::Alphabet);
+    assert!(engine.mode.current() != InputMode::Alphabet);
 
     // Clear the composed "A", then type 'a' → should be 'あ' (hiragana mode)
     engine.process_key(&press_key(Keysym::RETURN));
@@ -25,12 +25,12 @@ fn test_mode_toggle_key_switches_alphabet_to_hiragana() {
 #[test]
 fn test_mode_toggle_key_noop_in_hiragana() {
     let mut engine = InputMethodEngine::new();
-    assert!(engine.input_mode != InputMode::Alphabet);
+    assert!(engine.mode.current() != InputMode::Alphabet);
 
     // Alt_R press in hiragana mode → not consumed, no mode change
     let result = engine.process_key(&press_key(Keysym::ALT_R));
     assert!(!result.consumed);
-    assert!(engine.input_mode != InputMode::Alphabet);
+    assert!(engine.mode.current() != InputMode::Alphabet);
 
     // Type 'a' → still hiragana
     engine.process_key(&press('a'));
@@ -45,12 +45,12 @@ fn test_mode_toggle_key_during_alphabet_input() {
     engine.process_key(&press_shift('A'));
     engine.process_key(&press('b'));
     assert_eq!(engine.preedit().unwrap().text(), "Ab");
-    assert!(engine.input_mode == InputMode::Alphabet);
+    assert!(engine.mode.current() == InputMode::Alphabet);
 
     // Alt_R → switch to hiragana
     let result = engine.process_key(&press_key(Keysym::ALT_R));
     assert!(result.consumed);
-    assert!(engine.input_mode != InputMode::Alphabet);
+    assert!(engine.mode.current() != InputMode::Alphabet);
 
     // Continue typing → hiragana
     engine.process_key(&press('k'));
@@ -64,12 +64,12 @@ fn test_super_r_also_switches_alphabet_to_hiragana() {
 
     // Enter alphabet mode via Shift+A
     engine.process_key(&press_shift('A'));
-    assert!(engine.input_mode == InputMode::Alphabet);
+    assert!(engine.mode.current() == InputMode::Alphabet);
 
     // Super_R press → switch to hiragana (one-way)
     let result = engine.process_key(&press_key(Keysym::SUPER_R));
     assert!(result.consumed);
-    assert!(engine.input_mode != InputMode::Alphabet);
+    assert!(engine.mode.current() != InputMode::Alphabet);
 }
 
 #[test]
@@ -78,10 +78,10 @@ fn test_meta_r_also_switches_alphabet_to_hiragana() {
 
     // Enter alphabet mode via Shift+A
     engine.process_key(&press_shift('A'));
-    assert!(engine.input_mode == InputMode::Alphabet);
+    assert!(engine.mode.current() == InputMode::Alphabet);
 
     // Meta_R press → switch to hiragana (one-way)
     let result = engine.process_key(&press_key(Keysym::META_R));
     assert!(result.consumed);
-    assert!(engine.input_mode != InputMode::Alphabet);
+    assert!(engine.mode.current() != InputMode::Alphabet);
 }

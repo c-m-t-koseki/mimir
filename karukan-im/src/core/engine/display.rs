@@ -21,7 +21,7 @@ impl InputMethodEngine {
             .collect();
         let buffer = self.converters.romaji.buffer();
 
-        let katakana = self.input_mode == InputMode::Katakana;
+        let katakana = self.mode.current() == InputMode::Katakana;
         let display_before = if katakana {
             karukan_engine::hiragana_to_katakana(&before)
         } else {
@@ -124,7 +124,7 @@ impl InputMethodEngine {
 
     /// Get the current mode indicator string
     pub(super) fn mode_indicator(&self) -> String {
-        let base = match self.input_mode {
+        let base = match self.mode.current() {
             InputMode::Alphabet => "[A]",
             InputMode::Katakana => "[カ]",
             InputMode::Hiragana => "[あ]",

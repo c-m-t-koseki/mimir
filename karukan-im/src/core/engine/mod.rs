@@ -132,20 +132,9 @@ pub struct InputMethodEngine {
     config: EngineConfig,
     /// Conversion timing and adaptive model metrics
     metrics: ConversionMetrics,
-    /// Current input mode (Hiragana, Katakana, or Alphabet)
-    input_mode: InputMode,
-    /// Mode active immediately before entering [`InputMode::Emoji`],
-    /// so commit/cancel/backspace-to-empty can put the user back where
-    /// they were instead of dropping them in Hiragana every time. `None`
-    /// whenever the current mode is not Emoji.
-    pre_emoji_mode: Option<InputMode>,
-    /// Mode active immediately before Shift+letter switched to
-    /// [`InputMode::Alphabet`]. Alphabet is a *temporary* per-composition
-    /// mode: commit/cancel/backspace-to-empty restores this mode so the next
-    /// word goes back to kana automatically, matching the macOS/Google IME
-    /// convention (the Shift gesture is per-word, not a sticky toggle). `None`
-    /// whenever the current mode is not Alphabet.
-    pre_alphabet_mode: Option<InputMode>,
+    /// Current input mode plus the mode to come back to when a temporary
+    /// mode (Emoji, Alphabet) ends — see [`ModeState`]
+    mode: ModeState,
     /// Composed input buffer (hiragana text, cursor position)
     input_buf: InputBuffer,
     /// Live conversion state
@@ -176,9 +165,7 @@ impl InputMethodEngine {
             surrounding_context: None,
             config: EngineConfig::default(),
             metrics: ConversionMetrics::default(),
-            input_mode: InputMode::Hiragana,
-            pre_emoji_mode: None,
-            pre_alphabet_mode: None,
+            mode: ModeState::default(),
             input_buf: InputBuffer::new(),
             live: LiveConversion::default(),
             chunks: Vec::new(),
@@ -250,39 +237,11 @@ impl InputMethodEngine {
     pub fn reset(&mut self) {
         self.state = InputState::Empty;
         self.converters.romaji.reset();
-        self.input_mode = InputMode::Hiragana;
-        self.pre_emoji_mode = None;
-        self.pre_alphabet_mode = None;
+        self.mode = ModeState::default();
         self.input_buf.clear();
         self.live.text.clear();
         self.chunks.clear();
         self.metrics = ConversionMetrics::default();
-    }
-
-    /// If currently in Emoji mode, restore the mode the user was in
-    /// before they typed `:`. Falls back to Hiragana if nothing was
-    /// saved (defensive — `start_emoji_mode` always sets it). No-op
-    /// when not in Emoji mode, so it's safe to call unconditionally
-    /// from the various exit sites.
-    pub(super) fn exit_emoji_mode(&mut self) {
-        if self.input_mode == InputMode::Emoji {
-            self.input_mode = self.pre_emoji_mode.take().unwrap_or(InputMode::Hiragana);
-        }
-    }
-
-    /// If currently in Alphabet mode, restore the mode the user was in before
-    /// Shift+letter switched to it. Falls back to Hiragana if nothing was
-    /// saved. No-op when not in Alphabet mode, so it's safe to call
-    /// unconditionally from the commit/cancel/erase-to-empty exit sites.
-    ///
-    /// This is what makes Shift-triggered alphabet input *temporary*: once the
-    /// word is committed (or abandoned), the next word returns to kana without
-    /// an explicit toggle key — the behavior US-layout users expect, since
-    /// they have no JIS かな key to switch back with (issue #37).
-    pub(super) fn exit_alphabet_mode(&mut self) {
-        if self.input_mode == InputMode::Alphabet {
-            self.input_mode = self.pre_alphabet_mode.take().unwrap_or(InputMode::Hiragana);
-        }
     }
 
     /// If the display is empty, reset to Empty state and return the result.
@@ -298,16 +257,12 @@ impl InputMethodEngine {
             // against a buffer it no longer matches).
             self.live.text.clear();
             self.chunks.clear();
-            // Emoji mode is per-session and bound to the typed `:` —
-            // if the user erased back to an empty buffer, the session
-            // is over. Restore whatever mode the user was in before
-            // entering Emoji so the next keypress doesn't get treated
-            // as a literal emoji-query char (and so a Katakana-mode user
-            // lands back in Katakana, not Hiragana).
-            self.exit_emoji_mode();
-            // Likewise, Shift-triggered Alphabet mode is per-composition:
-            // erasing back to empty ends it, so restore the prior mode.
-            self.exit_alphabet_mode();
+            // Temporary modes (Emoji, Alphabet) are per-composition:
+            // erasing back to an empty buffer ends the session, so restore
+            // the mode the user was in before entering it (a Katakana-mode
+            // user lands back in Katakana, and the next keypress doesn't
+            // get treated as a literal emoji-query char).
+            self.mode.exit_temporary();
             Some(
                 EngineResult::consumed()
                     .with_action(EngineAction::UpdatePreedit(Preedit::new()))
@@ -436,12 +391,12 @@ impl InputMethodEngine {
         }
         // Only consume the key when actually switching; otherwise pass through
         // so the system can properly track modifier state.
-        if key.is_press && self.input_mode != InputMode::Hiragana {
+        if key.is_press && self.mode.current() != InputMode::Hiragana {
             // Bake katakana before switching so preedit doesn't revert
-            if self.input_mode == InputMode::Katakana {
+            if self.mode.current() == InputMode::Katakana {
                 self.bake_katakana();
             }
-            self.input_mode = InputMode::Hiragana;
+            self.mode.set(InputMode::Hiragana);
             self.flush_romaji_to_composed();
             let aux = self.format_aux_composing();
             if matches!(self.state, InputState::Composing { .. }) {
