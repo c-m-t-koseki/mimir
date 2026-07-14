@@ -652,6 +652,7 @@ impl InputMethodEngine {
         self.state = InputState::Empty;
         self.input_buf.text.clear();
         self.exit_emoji_mode();
+        self.exit_alphabet_mode();
 
         EngineResult::consumed()
             .with_action(EngineAction::HideCandidates)
@@ -674,6 +675,7 @@ impl InputMethodEngine {
         self.state = InputState::Empty;
         self.input_buf.text.clear();
         self.exit_emoji_mode();
+        self.exit_alphabet_mode();
 
         // Start new input with the character
         let new_input_result = self.start_input(ch);

@@ -186,6 +186,10 @@ impl InputMethodEngine {
                 ch.is_ascii_uppercase() || (shift_active && ch.is_ascii_alphabetic());
 
             if is_shift_alpha && self.input_mode != InputMode::Alphabet {
+                // Remember the mode to restore when this word is committed:
+                // Shift-alphabet is a temporary per-word mode, not a sticky
+                // toggle, so the next word returns to kana (issue #37).
+                self.pre_alphabet_mode = Some(self.input_mode);
                 self.input_mode = InputMode::Alphabet;
             }
             let ch = if self.input_mode == InputMode::Alphabet && is_shift_alpha {
@@ -298,6 +302,10 @@ impl InputMethodEngine {
                         ch.is_ascii_uppercase() || (shift_active && ch.is_ascii_alphabetic());
 
                     if is_shift_alpha && self.input_mode != InputMode::Alphabet {
+                        // Remember the mode to restore on commit/cancel:
+                        // Shift-alphabet is a temporary per-word mode, so the
+                        // next word returns to the prior mode (issue #37).
+                        self.pre_alphabet_mode = Some(self.input_mode);
                         // Bake katakana before switching so preedit doesn't revert
                         if self.input_mode == InputMode::Katakana {
                             self.bake_katakana();
@@ -438,6 +446,9 @@ impl InputMethodEngine {
         self.chunks.clear();
         self.state = InputState::Empty;
         self.exit_emoji_mode();
+        // Shift-alphabet is temporary: committing the word returns to the
+        // prior mode (Hiragana), so the next word is converted again (#37).
+        self.exit_alphabet_mode();
 
         // HideCandidates is required here: the auto-suggest/live-conversion
         // window may be open while Composing, and the macOS frontend's
@@ -485,6 +496,9 @@ impl InputMethodEngine {
         // whatever mode they were in before typing `:` so their next
         // word doesn't unexpectedly stay in ASCII-passthrough mode.
         self.exit_emoji_mode();
+        // Same for Shift-triggered Alphabet mode: cancelling restores the
+        // prior mode so the next word is back in kana (#37).
+        self.exit_alphabet_mode();
 
         if let Some(literal) = emoji_literal {
             EngineResult::consumed()
