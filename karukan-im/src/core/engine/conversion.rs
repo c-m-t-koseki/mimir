@@ -225,28 +225,29 @@ impl InputMethodEngine {
             return EngineResult::consumed().with_action(EngineAction::UpdatePreedit(preedit));
         }
 
-        // Map AnnotatedCandidate → public Candidate. The two annotation
-        // slots are kept disjoint so descriptions never duplicate between the
-        // aux text and the candidate's right-side comment:
-        //   - `source_label` ← source.label() only (e.g. `🤖 AI`, `📚 辞書`)
-        //   - `description`  ← the per-candidate description only
-        //                      (e.g. `三点リーダ`, `[全]英大文字`)
-        let candidate_list = CandidateList::new(
+        let candidate_list = Self::to_conversion_candidate_list(candidates, &reading);
+        self.enter_conversion_state(&reading, candidate_list)
+    }
+
+    /// Map builder output (`AnnotatedCandidate`) to the public
+    /// [`CandidateList`] shown in the conversion window. Candidates that don't
+    /// carry their own reading fall back to `reading`. The source rides along
+    /// as-is; its presentation (aux label, deletability) is derived on read.
+    fn to_conversion_candidate_list(
+        candidates: Vec<AnnotatedCandidate>,
+        reading: &str,
+    ) -> CandidateList {
+        CandidateList::new(
             candidates
                 .into_iter()
-                .map(|ac| {
-                    let cand_reading = ac.reading.unwrap_or_else(|| reading.clone());
-                    let label = ac.source.label();
-                    Candidate {
-                        text: ac.text,
-                        reading: Some(cand_reading),
-                        source_label: (!label.is_empty()).then(|| label.to_string()),
-                        description: ac.description,
-                    }
+                .map(|ac| Candidate {
+                    reading: Some(ac.reading.unwrap_or_else(|| reading.to_string())),
+                    text: ac.text,
+                    source: Some(ac.source),
+                    description: ac.description,
                 })
                 .collect(),
-        );
-        self.enter_conversion_state(&reading, candidate_list)
+        )
     }
 
     /// Transition to Conversion state with the given reading and candidate list.
@@ -483,7 +484,6 @@ impl InputMethodEngine {
         };
         let mut candidates: Vec<Candidate> = Vec::new();
         let mut seen = HashSet::new();
-        let label = CandidateSource::Learning.label().to_string();
 
         // Exact match
         for (surface, _score) in cache.lookup(reading) {
@@ -494,7 +494,7 @@ impl InputMethodEngine {
                 candidates.push(Candidate {
                     text: surface,
                     reading: Some(reading.to_string()),
-                    source_label: Some(label.clone()),
+                    source: Some(CandidateSource::Learning),
                     description: None,
                 });
             }
@@ -512,7 +512,7 @@ impl InputMethodEngine {
                 candidates.push(Candidate {
                     text: surface,
                     reading: Some(full_reading),
-                    source_label: Some(label.clone()),
+                    source: Some(CandidateSource::Learning),
                     description: None,
                 });
             }
@@ -530,7 +530,7 @@ impl InputMethodEngine {
             .map(|ac| Candidate {
                 text: ac.text,
                 reading: Some(reading.to_string()),
-                source_label: Some(ac.source.label().to_string()),
+                source: Some(ac.source),
                 description: None,
             })
             .collect()
@@ -540,7 +540,6 @@ impl InputMethodEngine {
     /// symbol input `「` → `『`, `【`, `（`, ...). Used in the auto-suggest path
     /// so users see mozc-style symbol variants without pressing Space first.
     pub(super) fn lookup_rewriter_variants(&self, reading: &str) -> Vec<Candidate> {
-        let source_label = CandidateSource::Rewriter.label().to_string();
         self.converters
             .rewriters
             .rewrite_all(&[reading.to_string()])
@@ -548,7 +547,7 @@ impl InputMethodEngine {
             .map(|(text, description)| Candidate {
                 text,
                 reading: Some(reading.to_string()),
-                source_label: Some(source_label.clone()),
+                source: Some(CandidateSource::Rewriter),
                 description,
             })
             .collect()
@@ -579,6 +578,20 @@ impl InputMethodEngine {
             Keysym::UP => self.prev_candidate(),
             Keysym::PAGE_DOWN => self.next_candidate_page(),
             Keysym::PAGE_UP => self.prev_candidate_page(),
+            // Ctrl+Backspace / Ctrl+Delete: delete the selected learning
+            // candidate from the history. Backspace doubles as Delete because
+            // the Mac "delete" key is Backspace. On a non-learning selection
+            // the chord is consumed but does nothing, so it can't leak into
+            // the application mid-conversion.
+            Keysym::DELETE | Keysym::BACKSPACE
+                if key.modifiers.control_key && !key.modifiers.alt_key =>
+            {
+                if self.selected_is_deletable() {
+                    self.delete_selected_candidate_from_history()
+                } else {
+                    EngineResult::consumed()
+                }
+            }
             Keysym::BACKSPACE => self.backspace_conversion(),
             _ => {
                 // Ctrl+N / Ctrl+P: emacs-style candidate navigation
@@ -679,6 +692,57 @@ impl InputMethodEngine {
             .with_action(EngineAction::HideCandidates);
         result.actions.extend(new_input_result.actions);
         result
+    }
+
+    /// Whether the selected candidate can be removed from the learning
+    /// history. False when nothing is selected, so the delete chord stays
+    /// inert outside the case it is meant for.
+    fn selected_is_deletable(&self) -> bool {
+        self.state
+            .candidates()
+            .and_then(|c| c.selected())
+            .is_some_and(Candidate::is_deletable)
+    }
+
+    /// Delete the selected learning candidate from the history
+    /// (Ctrl+Backspace / Ctrl+Delete); the caller guards deletability
+    /// ([`Self::selected_is_deletable`]).
+    ///
+    /// Removes the entry and its prefix twins
+    /// ([`LearningCache::remove_suggestion`]), then rebuilds the conversion
+    /// rather than dropping the row in place: dedup hid any
+    /// model/dictionary/fallback copy of the same surface behind the learning
+    /// entry, and only a rebuild brings it back.
+    fn delete_selected_candidate_from_history(&mut self) -> EngineResult {
+        let Some(surface) = self
+            .state
+            .candidates()
+            .and_then(|c| c.selected())
+            .map(|c| c.text.clone())
+        else {
+            return EngineResult::consumed();
+        };
+        // The typed reading is the key the candidate was looked up under. A
+        // prefix-matched candidate carries a longer reading of its own, but
+        // every entry that surfaces it has the typed reading as a prefix, so
+        // removing by the typed reading clears the shown row and its twins.
+        let reading = self.input_buf.text.clone();
+        let removed = self
+            .learning
+            .as_mut()
+            .is_some_and(|cache| cache.remove_suggestion(&reading, &surface));
+        if !removed {
+            return EngineResult::consumed();
+        }
+        debug!("deleted learning entry: {} -> {}", reading, surface);
+
+        let candidates =
+            self.build_conversion_candidates(&reading, self.config.num_candidates, false);
+        if candidates.is_empty() {
+            return self.cancel_conversion();
+        }
+        let candidate_list = Self::to_conversion_candidate_list(candidates, &reading);
+        self.enter_conversion_state(&reading, candidate_list)
     }
 
     /// Cancel conversion and return to hiragana
