@@ -79,6 +79,28 @@ impl RomajiConverter {
     pub fn starts_rule(&self, ch: char) -> bool {
         self.trie.children.contains_key(&ch)
     }
+
+    /// Kana the pending romaji can still become: the outputs of every rule
+    /// whose key extends `pending` (`d` → だ/ぢ/づ/で/ど/ぢゃ…; `n` includes
+    /// ん via `nn`/`n'`). Empty when `pending` is empty or cannot reach any
+    /// rule (`yk`). Used to narrow predictive dictionary lookups while a
+    /// romaji tail is being typed.
+    pub fn pending_expansions(&self, pending: &str) -> Vec<String> {
+        if pending.is_empty() {
+            return Vec::new();
+        }
+        let Some(node) = pending
+            .chars()
+            .try_fold(&self.trie, |node, ch| node.children.get(&ch))
+        else {
+            return Vec::new();
+        };
+        node.outputs()
+            .map(str::to_string)
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect()
+    }
 }
 
 impl Default for RomajiConverter {
@@ -318,6 +340,27 @@ mod tests {
                 "rule output contains ASCII: {output:?}"
             );
         });
+    }
+
+    #[test]
+    fn test_pending_expansions() {
+        let c = RomajiConverter::new();
+
+        let d = c.pending_expansions("d");
+        for kana in ["だ", "ぢ", "づ", "で", "ど", "ぢゃ"] {
+            assert!(d.iter().any(|s| s == kana), "missing {kana}");
+        }
+        assert!(!d.iter().any(|s| s == "か"));
+
+        // ん is reachable from a lone n via nn / n'
+        assert!(c.pending_expansions("n").iter().any(|s| s == "ん"));
+
+        let ky = c.pending_expansions("ky");
+        assert!(ky.iter().any(|s| s == "きょ"));
+        assert!(!ky.iter().any(|s| s == "か"));
+
+        assert!(c.pending_expansions("").is_empty());
+        assert!(c.pending_expansions("yk").is_empty());
     }
 
     #[test]

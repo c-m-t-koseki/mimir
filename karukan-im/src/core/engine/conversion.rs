@@ -11,6 +11,15 @@ use super::*;
 /// Maximum number of learning candidates to show
 const MAX_LEARNING_CANDIDATES: usize = 3;
 
+/// Max predictive (prefix-extending) dictionary candidates in the
+/// composing suggestion list. The conversion list is uncapped — the full
+/// ranked set goes into the paged candidate window.
+const MAX_PREDICTIVE_SUGGESTIONS: usize = 3;
+
+/// Min typed characters before predictive dictionary lookup kicks in — a
+/// single key would flood the list from a large dictionary
+const MIN_PREDICTIVE_PREFIX_CHARS: usize = 2;
+
 /// Mozc-style width/script annotation for a pure-kana candidate, or `None`
 /// if the text mixes scripts or contains kanji/punctuation. Used to label
 /// `あ` / `ア` / `ｱ` candidates in the conversion list.
@@ -275,42 +284,73 @@ impl InputMethodEngine {
     ///
     /// User dictionary results come first (higher priority), then system dictionary
     /// results sorted by score. Duplicates are removed via HashSet.
-    fn search_dictionaries(&self, reading: &str, limit: usize) -> Vec<AnnotatedCandidate> {
+    ///
+    /// `pending` is the unresolved romaji tail, if any: it narrows the
+    /// predictive lookup to readings the tail can still become (わせ + `d`
+    /// keeps わせだ… and drops わせり…). `predictive_limit` caps the
+    /// prefix-extending results: small for the suggestion list, unlimited
+    /// for the paged conversion list.
+    fn search_dictionaries(
+        &self,
+        reading: &str,
+        pending: &str,
+        limit: usize,
+        predictive_limit: usize,
+    ) -> Vec<AnnotatedCandidate> {
+        let dicts = [
+            (self.dicts.user.as_ref(), CandidateSource::UserDictionary),
+            (self.dicts.system.as_ref(), CandidateSource::Dictionary),
+        ];
         let mut candidates = Vec::new();
         let mut seen = HashSet::new();
 
-        // User dictionary (higher priority)
-        if let Some(dict) = &self.dicts.user
-            && let Some(result) = dict.exact_match_search(reading)
-        {
+        // Exact matches, user dictionary first. Candidates are sorted by
+        // score at build/load time
+        for (dict, source) in dicts {
+            let Some(result) = dict.and_then(|d| d.exact_match_search(reading)) else {
+                continue;
+            };
             for cand in result.candidates {
                 if candidates.len() >= limit {
                     break;
                 }
                 if seen.insert(cand.surface.clone()) {
-                    candidates.push(AnnotatedCandidate::new(
-                        cand.surface.clone(),
-                        CandidateSource::UserDictionary,
-                    ));
+                    candidates.push(AnnotatedCandidate::new(cand.surface.clone(), source));
                 }
             }
         }
 
-        // System dictionary (sorted by score)
-        if let Some(dict) = &self.dicts.system
-            && let Some(result) = dict.exact_match_search(reading)
-        {
-            let mut dict_candidates: Vec<_> = result.candidates.to_vec();
-            dict_candidates.sort_by(|a, b| a.score.total_cmp(&b.score));
-            for cand in dict_candidates {
-                if candidates.len() >= limit {
+        // Predictive: dictionary readings extending the typed prefix,
+        // mirroring the learning cache's prefix lookup. The full reading
+        // rides on the candidate so selecting it commits and records under
+        // the right key. An unresolved romaji tail narrows the lookup to
+        // the kana it can still become; a tail that can't become kana
+        // (`yk`) suppresses prediction entirely.
+        if reading.chars().count() >= MIN_PREDICTIVE_PREFIX_CHARS {
+            let expansions = self.converters.romaji.pending_expansions(pending);
+            let tail_is_dead = !pending.is_empty() && expansions.is_empty();
+            let mut budget = if tail_is_dead { 0 } else { predictive_limit };
+            for (dict, source) in dicts {
+                if budget == 0 {
                     break;
                 }
-                if seen.insert(cand.surface.clone()) {
-                    candidates.push(AnnotatedCandidate::new(
-                        cand.surface,
-                        CandidateSource::Dictionary,
-                    ));
+                let Some(dict) = dict else { continue };
+                let matches = if expansions.is_empty() {
+                    dict.predictive_search(reading, budget)
+                } else {
+                    dict.predictive_search_expanded(reading, &expansions, budget)
+                };
+                for m in matches {
+                    if budget == 0 || candidates.len() >= limit {
+                        break;
+                    }
+                    if seen.insert(m.candidate.surface.clone()) {
+                        budget -= 1;
+                        candidates.push(
+                            AnnotatedCandidate::new(m.candidate.surface.clone(), source)
+                                .with_reading(Some(m.reading.to_string())),
+                        );
+                    }
                 }
             }
         }
@@ -369,7 +409,7 @@ impl InputMethodEngine {
         }
 
         // 2. Dictionary candidates (user dict first, then system dict)
-        let dict_results = self.search_dictionaries(reading, usize::MAX);
+        let dict_results = self.search_dictionaries(reading, "", usize::MAX, usize::MAX);
         // Insert user dictionary entries at the top (after learning)
         for ac in &dict_results {
             if ac.source == CandidateSource::UserDictionary {
@@ -524,15 +564,22 @@ impl InputMethodEngine {
     ///
     /// Searches user dictionary first, then system dictionary.
     pub(super) fn lookup_dict_candidates(&self, reading: &str) -> Vec<Candidate> {
-        self.search_dictionaries(reading, CandidateList::DEFAULT_PAGE_SIZE)
-            .into_iter()
-            .map(|ac| Candidate {
-                text: ac.text,
-                reading: Some(reading.to_string()),
-                source: Some(ac.source),
-                description: None,
-            })
-            .collect()
+        let pending = self.input_buf.pending();
+        self.search_dictionaries(
+            reading,
+            &pending,
+            CandidateList::DEFAULT_PAGE_SIZE,
+            MAX_PREDICTIVE_SUGGESTIONS,
+        )
+        .into_iter()
+        .map(|ac| Candidate {
+            text: ac.text,
+            // Predictive results carry their own (longer) reading
+            reading: ac.reading.or_else(|| Some(reading.to_string())),
+            source: Some(ac.source),
+            description: None,
+        })
+        .collect()
     }
 
     /// Build rule-based rewriter variants for the reading itself (e.g. for
