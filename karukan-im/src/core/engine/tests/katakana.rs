@@ -164,7 +164,7 @@ fn test_katakana_baked_on_switch_to_alphabet() {
     engine.process_key(&press_shift('L'));
     assert!(engine.mode.current() == InputMode::Alphabet);
     // The katakana text should be preserved, not reverted to hiragana
-    assert_eq!(engine.input_buf.text, "アイウエオL");
+    assert_eq!(engine.input_buf.reading(), "アイウエオL");
 
     // Type alphabet chars → appended after katakana
     engine.process_key(&press('i'));
@@ -205,7 +205,7 @@ fn test_ctrl_k_is_one_way_to_katakana() {
     // Right Super → return to hiragana mode, katakana is baked in
     engine.process_key(&press_key(Keysym::SUPER_R));
     assert!(engine.mode.current() == InputMode::Hiragana);
-    assert_eq!(engine.input_buf.text, "アイ");
+    assert_eq!(engine.input_buf.reading(), "アイ");
     assert_eq!(engine.preedit().unwrap().text(), "アイ");
 
     // New input in hiragana mode

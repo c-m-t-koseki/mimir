@@ -29,7 +29,7 @@ fn type_aiue(engine: &mut InputMethodEngine) {
 fn test_buffer_split_into_chunks_of_n_chars() {
     let mut engine = make_chunk_engine(2);
     type_aiue(&mut engine);
-    assert_eq!(engine.input_buf.text, "あいうえ");
+    assert_eq!(engine.input_buf.reading(), "あいうえ");
 
     // 4 chars / N=2 → two chunks, each exactly N chars.
     let readings: Vec<&str> = engine.chunks.iter().map(|s| s.reading.as_str()).collect();
@@ -47,7 +47,7 @@ fn test_typed_punctuation_splits_chunks() {
     for k in ['h', 'a', ',', 'j', 'i', '.', 'm', 'e'] {
         engine.process_key(&press(k));
     }
-    assert_eq!(engine.input_buf.text, "は、じ。め");
+    assert_eq!(engine.input_buf.reading(), "は、じ。め");
     let readings: Vec<&str> = engine.chunks.iter().map(|c| c.reading.as_str()).collect();
     assert_eq!(readings, vec!["は", "、", "じ", "。", "め"]);
 }
@@ -61,7 +61,7 @@ fn test_typed_digits_form_their_own_chunk() {
     for k in ['a', '1', '2', '3', 'i'] {
         engine.process_key(&press(k));
     }
-    assert_eq!(engine.input_buf.text, "あ123い");
+    assert_eq!(engine.input_buf.reading(), "あ123い");
     let readings: Vec<&str> = engine.chunks.iter().map(|c| c.reading.as_str()).collect();
     assert_eq!(readings, vec!["あ", "123", "い"]);
 }
@@ -117,7 +117,7 @@ fn test_short_buffer_is_a_single_chunk() {
     let mut engine = InputMethodEngine::new();
     engine.process_key(&press('a'));
     engine.process_key(&press('i'));
-    assert_eq!(engine.input_buf.text, "あい");
+    assert_eq!(engine.input_buf.reading(), "あい");
     assert_eq!(engine.chunks.len(), 1);
     assert_eq!(engine.chunks[0].reading, "あい");
 }
@@ -169,7 +169,7 @@ fn test_current_chunk_index_tracks_cursor() {
     engine.process_key(&press_key(Keysym::LEFT));
     engine.process_key(&press_key(Keysym::LEFT));
     engine.process_key(&press_key(Keysym::LEFT));
-    assert_eq!(engine.input_buf.cursor_pos, 0);
+    assert_eq!(engine.input_buf.reading_cursor(), 0);
     assert_eq!(engine.current_chunk_index(), 0);
 }
 
@@ -186,7 +186,7 @@ fn test_current_chunk_index_with_variable_length_chunks() {
 
     // cursor pos → expected chunk index
     for (pos, expected) in [(0, 0), (1, 0), (2, 1), (3, 2), (4, 3), (5, 4)] {
-        engine.input_buf.cursor_pos = pos;
+        engine.input_buf.set_cursor(pos);
         assert_eq!(
             engine.current_chunk_index(),
             expected,
@@ -204,7 +204,7 @@ fn test_backspace_reconverts_last_chunk_partition() {
     assert_eq!(engine.chunks.len(), 2);
 
     engine.process_key(&press_key(Keysym::BACKSPACE)); // "あいう" → ["あい", "う"]
-    assert_eq!(engine.input_buf.text, "あいう");
+    assert_eq!(engine.input_buf.reading(), "あいう");
     let readings: Vec<&str> = engine.chunks.iter().map(|s| s.reading.as_str()).collect();
     assert_eq!(readings, vec!["あい", "う"]);
     // First chunk keeps an empty left context; the surviving last chunk's
@@ -247,7 +247,7 @@ fn test_delete_all_chars_clears_chunks() {
         engine.process_key(&press_key(Keysym::BACKSPACE));
     }
     assert!(matches!(engine.state(), InputState::Empty));
-    assert_eq!(engine.input_buf.text, "");
+    assert_eq!(engine.input_buf.reading(), "");
     assert!(engine.chunks.is_empty(), "chunk cache must be cleared");
     assert!(engine.live.text.is_empty(), "live text must be cleared");
 }
@@ -274,7 +274,7 @@ fn test_delete_first_chunk_reuses_remaining_suffix() {
     engine.process_key(&press_key(Keysym::DELETE));
     engine.process_key(&press_key(Keysym::DELETE));
 
-    assert_eq!(engine.input_buf.text, "うえ");
+    assert_eq!(engine.input_buf.reading(), "うえ");
     let readings: Vec<&str> = engine.chunks.iter().map(|s| s.reading.as_str()).collect();
     assert_eq!(readings, vec!["うえ"]);
     // Reused from the suffix → cached conversion survives (no reconvert).
@@ -298,7 +298,7 @@ fn test_middle_delete_reconverts_only_touched_chunk() {
     engine.process_key(&press_key(Keysym::RIGHT));
     engine.process_key(&press_key(Keysym::BACKSPACE));
 
-    assert_eq!(engine.input_buf.text, "あいえおか");
+    assert_eq!(engine.input_buf.reading(), "あいえおか");
     let readings: Vec<&str> = engine.chunks.iter().map(|s| s.reading.as_str()).collect();
     assert_eq!(readings, vec!["あい", "え", "おか"]);
     // Neighbors reused (sentinels survive); only the middle chunk reconverted.

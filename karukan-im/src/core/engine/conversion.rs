@@ -172,7 +172,7 @@ impl InputMethodEngine {
 
     /// Start kanji conversion for the current input buffer.
     ///
-    /// Called when DOWN/TAB/SPACE is pressed: flushes any pending romaji,
+    /// Called when DOWN/TAB/SPACE is pressed: settles any pending romaji,
     /// resolves the reading, runs `build_conversion_candidates`, and
     /// transitions into the Conversion state. The previous live-conversion
     /// result is preserved as the first model candidate so the user sees
@@ -181,18 +181,15 @@ impl InputMethodEngine {
     /// `skip_learning` is set by the Tab path to omit learning-cache
     /// candidates (Space/Down keep the default learning-included behavior).
     pub(super) fn start_conversion(&mut self, skip_learning: bool) -> EngineResult {
-        // Flush any remaining romaji into composed_hiragana
-        self.flush_romaji_to_composed();
+        // Settle any remaining romaji
+        self.settle_romaji();
 
-        let reading = self.input_buf.text.clone();
+        let reading = self.input_buf.reading();
 
         // Save auto-suggest/live conversion result before clearing state.
         // This ensures the candidate that was displayed during input is preserved
         // in the conversion candidate list even if the re-inference uses a different strategy.
         let prev_suggest_text = std::mem::take(&mut self.live.text);
-
-        self.converters.romaji.reset();
-        self.input_buf.cursor_pos = 0;
 
         if reading.is_empty() {
             return EngineResult::consumed();
@@ -216,15 +213,17 @@ impl InputMethodEngine {
         }
 
         if candidates.is_empty() {
-            // No candidates, stay in hiragana mode
+            // No candidates: stay composing with the caret where it was,
+            // so the next key keeps appending (emoji queries with no match
+            // land here)
             let preedit = Preedit::with_text_underlined(&reading);
             self.state = InputState::Composing {
                 preedit: preedit.clone(),
-                romaji_buffer: String::new(),
             };
             return EngineResult::consumed().with_action(EngineAction::UpdatePreedit(preedit));
         }
 
+        self.input_buf.set_cursor(0);
         let candidate_list = Self::to_conversion_candidate_list(candidates, &reading);
         self.enter_conversion_state(&reading, candidate_list)
     }
@@ -653,7 +652,7 @@ impl InputMethodEngine {
         }
 
         self.state = InputState::Empty;
-        self.input_buf.text.clear();
+        self.input_buf.clear();
         self.mode.exit_temporary();
     }
 
@@ -726,7 +725,7 @@ impl InputMethodEngine {
         // prefix-matched candidate carries a longer reading of its own, but
         // every entry that surfaces it has the typed reading as a prefix, so
         // removing by the typed reading clears the shown row and its twins.
-        let reading = self.input_buf.text.clone();
+        let reading = self.input_buf.reading();
         let removed = self
             .learning
             .as_mut()
@@ -750,7 +749,7 @@ impl InputMethodEngine {
         if !matches!(self.state, InputState::Conversion { .. }) {
             return EngineResult::not_consumed();
         }
-        let reading = self.input_buf.text.clone();
+        let reading = self.input_buf.reading();
 
         if reading.is_empty() {
             self.state = InputState::Empty;
@@ -761,16 +760,9 @@ impl InputMethodEngine {
                 .with_action(EngineAction::HideAuxText);
         }
 
-        // Set up composed_hiragana with the reading
-        self.input_buf.text = reading.clone();
-        self.input_buf.cursor_pos = self.input_buf.text.chars().count();
-
-        // Reset romaji converter and set output to reading
-        self.converters.romaji.reset();
-        // We need to push each character to rebuild the state
-        for ch in reading.chars() {
-            self.converters.romaji.push(ch);
-        }
+        // Rebuild the composition from the reading (no pending romaji)
+        self.input_buf.clear();
+        self.input_buf.insert(&reading);
 
         let preedit = self.set_composing_state();
 

@@ -8,50 +8,33 @@ use super::*;
 pub(super) const LEARNING_DELETE_HINT: &str = "Ctrl+Backspaceで履歴から削除";
 
 impl InputMethodEngine {
-    /// Build display text from the input buffer and romaji buffer
-    /// Format: composed[:cursor] + romaji_buffer + composed[cursor:]
-    /// In katakana mode, the composed parts are converted to katakana.
+    /// Build display text from the element array.
+    /// In katakana mode, kana parts are converted to katakana.
     pub(super) fn build_input_display(&self) -> String {
-        let before: String = self
-            .input_buf
-            .text
-            .chars()
-            .take(self.input_buf.cursor_pos)
-            .collect();
-        let after: String = self
-            .input_buf
-            .text
-            .chars()
-            .skip(self.input_buf.cursor_pos)
-            .collect();
-        let buffer = self.converters.romaji.buffer();
-
-        let katakana = self.mode.current() == InputMode::Katakana;
-        let display_before = if katakana {
-            karukan_engine::hiragana_to_katakana(&before)
+        let display = self.input_buf.display();
+        if self.mode.current() == InputMode::Katakana {
+            karukan_engine::hiragana_to_katakana(&display)
         } else {
-            before
-        };
-        let display_after = if katakana {
-            karukan_engine::hiragana_to_katakana(&after)
-        } else {
-            after
-        };
-
-        format!("{}{}{}", display_before, buffer, display_after)
+            display
+        }
     }
 
     /// Get the caret position in the display text (in characters)
     pub(super) fn display_caret_position(&self) -> usize {
-        self.input_buf.cursor_pos + self.converters.romaji.buffer().chars().count()
+        self.input_buf.cursor()
     }
 
     /// Build a preedit for composing state.
-    /// If live conversion text is present, shows live_text + romaji_buffer with caret at end.
+    /// If live conversion text is present, shows live_text + pending romaji
+    /// with caret at end. That layout is only faithful while typing at the
+    /// end of the composition — when the cursor is elsewhere the pending is
+    /// not the visual tail, so fall back to the kana display.
     /// Otherwise shows the input buffer display with cursor-based caret.
     pub(super) fn build_composing_preedit(&self) -> Preedit {
-        let (display, caret) = if !self.live.text.is_empty() {
-            let buffer = self.converters.romaji.buffer();
+        let live_at_end =
+            !self.live.text.is_empty() && self.input_buf.cursor() == self.input_buf.char_count();
+        let (display, caret) = if live_at_end {
+            let buffer = self.input_buf.pending();
             let display = format!("{}{}", self.live.text, buffer);
             let caret = display.chars().count();
             (display, caret)
@@ -146,12 +129,13 @@ impl InputMethodEngine {
         let ctx = self.display_context_chunked();
         let model = self.model_name();
         let indicator = self.mode_indicator();
-        // Show reading + unconverted romaji buffer (e.g. "わせだd")
-        let romaji_buf = self.converters.romaji.buffer();
-        let reading = if self.input_buf.text.is_empty() && romaji_buf.is_empty() {
+        // Show reading + unconverted pending romaji (e.g. "わせだd")
+        let romaji_buf = self.input_buf.pending();
+        let base = self.input_buf.reading();
+        let reading = if base.is_empty() && romaji_buf.is_empty() {
             String::new()
         } else {
-            format!(" {}{}", self.input_buf.text, romaji_buf)
+            format!(" {}{}", base, romaji_buf)
         };
         if ctx.is_empty() {
             format!("{}{} Karukan ({})", indicator, reading, model)
@@ -234,8 +218,8 @@ impl InputMethodEngine {
         );
         let model = self.last_used_model();
         let indicator = self.mode_indicator();
-        // Append unconverted romaji buffer to reading (e.g. "わせだ" + "d" → "わせだd")
-        let romaji_buf = self.converters.romaji.buffer();
+        // Append unconverted pending romaji to reading (e.g. "わせだ" + "d" → "わせだd")
+        let romaji_buf = self.input_buf.pending();
         let display_reading = if romaji_buf.is_empty() {
             reading.to_string()
         } else {

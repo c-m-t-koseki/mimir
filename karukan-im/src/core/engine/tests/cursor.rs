@@ -349,17 +349,17 @@ fn test_cursor_composed_hiragana_tracking() {
     engine.process_key(&press('a'));
     engine.process_key(&press('i'));
 
-    // Check internal state
-    assert_eq!(engine.input_buf.text, "あい");
-    assert_eq!(engine.input_buf.cursor_pos, 2);
+    // Check internal state: あ/い live as elements until a freeze
+    assert_eq!(engine.input_buf.reading(), "あい");
+    assert_eq!(engine.input_buf.reading_cursor(), 2);
 
-    // Move left
+    // Move left keeps the elements; only the cursor changes
     engine.process_key(&press_key(Keysym::LEFT));
-    assert_eq!(engine.input_buf.text, "あい");
-    assert_eq!(engine.input_buf.cursor_pos, 1);
+    assert_eq!(engine.input_buf.reading(), "あい");
+    assert_eq!(engine.input_buf.cursor(), 1);
 
     // Cancel should clear
     engine.process_key(&press_key(Keysym::ESCAPE));
-    assert_eq!(engine.input_buf.text, "");
-    assert_eq!(engine.input_buf.cursor_pos, 0);
+    assert_eq!(engine.input_buf.reading(), "");
+    assert_eq!(engine.input_buf.cursor(), 0);
 }

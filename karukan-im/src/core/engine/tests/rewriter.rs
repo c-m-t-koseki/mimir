@@ -15,11 +15,9 @@ use super::*;
 /// Engine in Composing state with the kanji model explicitly disabled.
 fn composing_engine(reading: &str) -> InputMethodEngine {
     let mut engine = InputMethodEngine::new();
-    engine.input_buf.text = reading.to_string();
-    engine.input_buf.cursor_pos = reading.chars().count();
+    engine.input_buf.insert(reading);
     engine.state = InputState::Composing {
         preedit: Preedit::new(),
-        romaji_buffer: String::new(),
     };
     engine.converters.kanji = None;
     engine
@@ -293,7 +291,7 @@ fn typing_three_dots_emits_ellipsis_in_auto_suggest_and_conversion() {
     let mut engine = InputMethodEngine::new();
     type_string(&mut engine, "..");
     let final_result = engine.process_key(&press('.'));
-    assert_eq!(engine.input_buf.text, "。。。");
+    assert_eq!(engine.input_buf.reading(), "。。。");
 
     assert_contains(&auto_suggest_texts(&final_result), "…");
 
