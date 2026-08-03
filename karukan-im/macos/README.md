@@ -18,7 +18,7 @@ Rust側(`karukan-im`)にあり、Swift側はInputMethodKitとの橋渡しに徹�
         どちらも Karukan.app バンドル内 (Contents/MacOS/)
 ```
 
-- プロトコル定義: `karukan-im/src/server/protocol.rs`(Rust側が正)と
+- プロトコル定義: `karukan-im/core/src/server/protocol.rs`(Rust側が正)と
   `Sources/KarukanIME/EngineProtocol.swift`(Swift側ミラー)
 - キーイベントはfcitx5版と同じXKB keysym表現に変換して送る
   (`Sources/KarukanIME/KeyCodeMap.swift`)
@@ -30,7 +30,7 @@ Rust側(`karukan-im`)にあり、Swift側はInputMethodKitとの橋渡しに徹�
 ### 初回インストール
 
 ```bash
-cd karukan-macos
+cd karukan-im/macos
 
 # ビルド + .appバンドル組み立て + ~/Library/Input Methods へインストール
 make install
@@ -93,17 +93,11 @@ cp dict.bin ~/Library/"Application Support"/com.karukan.karukan-im/
 killall KarukanIME  # 起動中の場合は再起動して反映
 ```
 
-辞書を自分でビルドする場合は [karukan-cli の README](../karukan-cli/README.md) を参照してください。
+辞書を自分でビルドする場合は [karukan-cli の README](../../karukan-cli/README.md) を参照してください。
 
 ## キー操作
 
-fcitx5版と同じキーバインドに加えて:
-
-| キー | 動作 |
-|------|------|
-| かな (JIS) | ひらがな入力モードへ戻る。Ctrl+K のカタカナモード、Shift+英字で入った英数字モードのどちらからでも有効(Linux版の右Super/変換キーに相当) |
-| 英数 (JIS) | 変換中テキストを確定して直接入力モードへ切替 |
-| 右⌘ 単独タップ | かなキーと同じ(ひらがな入力モードへ戻る)。JISかなキーが無いUS配列向けの代替で、Karabinerなどの設定は不要。⌘C など他のキーと組み合わせた場合や、他の修飾キーと同時押しした場合は発動しない |
+[docs/key-bindings.md](../../docs/key-bindings.md) を参照してください（共通キーバインドに加えて、JISかな・英数キーや右⌘単独タップなどのmacOS固有キーをまとめています）。
 
 ## 設定・データファイル
 
@@ -113,6 +107,8 @@ fcitx5版と同じキーバインドに加えて:
 - システム辞書: `~/Library/Application Support/com.karukan.karukan-im/dict.bin`
 - ユーザー辞書: `~/Library/Application Support/com.karukan.karukan-im/user_dicts/`
 - 学習データ: `~/Library/Application Support/com.karukan.karukan-im/learning.tsv`
+
+設定項目は [docs/configuration.md](../../docs/configuration.md) を、辞書は [docs/dictionary.md](../../docs/dictionary.md) を参照してください。
 
 ## デバッグ
 

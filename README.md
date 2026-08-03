@@ -16,17 +16,18 @@
 
 ## プロジェクト構成
 
-| クレート | 説明 |
-|---------|------|
-| [karukan-fcitx5](karukan-fcitx5/) | Linux向けIMEフロントエンド — fcitx5アドオン + C FFI |
-| [karukan-macos](karukan-macos/) | macOS向けIMEフロントエンド — Swift/InputMethodKit |
-| [karukan-im](karukan-im/) | 共有IMEエンジン — ステートマシン、ローマ字変換、karukan-imserver(macOS向けJSON-RPCサーバー) |
-| [karukan-engine](karukan-engine/) | コアライブラリ — ローマ字→ひらがな変換 + llama.cppによるニューラルかな漢字変換 |
-| [karukan-cli](karukan-cli/) | CLIツール・サーバー — 辞書ビルド、Sudachi辞書生成、辞書ビューア、AJIMEE-Bench、HTTPサーバー |
+IME本体(コアエンジン + 各プラットフォームのフロントエンド)は `karukan-im/` 配下にまとまっています。
+
+- [karukan-im/](karukan-im/) — IME本体
+  - [core/](karukan-im/core/) — 共有IMEエンジン(crate: `karukan-im`) — ステートマシン、ローマ字変換、karukan-imserver(macOS向けJSON-RPCサーバー)
+  - [fcitx5/](karukan-im/fcitx5/) — Linux向けフロントエンド(crate: `karukan-fcitx5`) — fcitx5アドオン + C FFI
+  - [macos/](karukan-im/macos/) — macOS向けフロントエンド — Swift/InputMethodKit
+- [karukan-engine/](karukan-engine/) — コアライブラリ — ローマ字→ひらがな変換 + llama.cppによるニューラルかな漢字変換
+- [karukan-cli/](karukan-cli/) — CLIツール・サーバー — 辞書ビルド、Sudachi辞書生成、辞書ビューア、AJIMEE-Bench、HTTPサーバー
 
 ## 特徴
 
-- **ニューラルかな漢字変換**: GPT-2ベースのモデルをllama.cppで推論し、高度な日本語変換
+- **ニューラルかな漢字変換**: GPT-2/Qwen3ベースのモデルをllama.cppで推論し、高度な日本語変換
 - **ライブ変換**: 入力と同時に変換結果をリアルタイム表示。Spaceを押さずに変換が進む（`Ctrl+Shift+L` でON/OFF）
 - **コンテキスト対応**: 周辺テキストを考慮した日本語変換
 - **変換学習**: ユーザーが選択した変換結果を記憶し、次回以降の変換で優先表示。予測変換（前方一致）にも対応し、入力途中でも学習済みの候補を提示
@@ -38,8 +39,15 @@
 
 ## インストール
 
-- **Linux (fcitx5)**: [karukan-fcitx5 の README](karukan-fcitx5/README.md#install) を参照
-- **macOS**: [karukan-macos の README](karukan-macos/README.md) を参照
+- **Linux (fcitx5)**: [karukan-fcitx5 の README](karukan-im/fcitx5/README.md#install) を参照
+- **macOS**: [karukan-macos の README](karukan-im/macos/README.md) を参照
+
+## ドキュメント
+
+- [キーバインド一覧](docs/key-bindings.md) — 共通キーバインドと Linux / macOS 固有キー
+- [設定](docs/configuration.md) — config.toml の設定項目、ライブ変換、変換ストラテジー、学習キャッシュ
+- [辞書](docs/dictionary.md) — システム辞書のインストール、ユーザー辞書、候補の優先順位
+- [ユーザー辞書](docs/user-dictionary.md) — 対応形式（Mozc/Google IME TSV・バイナリ）と登録方法
 
 ## ライセンス
 
