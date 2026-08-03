@@ -3,6 +3,7 @@
 //! This module contains the main `InputMethodEngine` struct that coordinates between
 //! the romaji converter, kanji converter, and manages the IME state.
 
+mod cache;
 mod chunk;
 mod conversion;
 mod cursor;
@@ -16,6 +17,7 @@ mod types;
 
 pub use types::*;
 
+use cache::{ConversionCache, ConversionCacheKey};
 use input_buffer::InputBuffer;
 
 #[cfg(test)]
@@ -128,12 +130,15 @@ pub struct InputMethodEngine {
     input_buf: InputBuffer,
     /// Live conversion state
     live: LiveConversion,
-    /// Internal chunking of the composing buffer used by
-    /// `chunked_auto_suggest`: a cache of the per-chunk model conversions.
-    /// Re-chunking diffs the new buffer against this by common prefix/suffix so
-    /// a keystroke only reconverts the chunk it touched, not the whole buffer.
-    /// Empty when not composing.
+    /// Internal chunking of the composing buffer built by
+    /// `chunked_auto_suggest`: the current per-chunk conversions, rebuilt from
+    /// scratch on every keystroke (per-chunk model calls are deduplicated by
+    /// `conversion_cache`, so unchanged chunks cost a lookup, not an
+    /// inference). Empty when not composing.
     chunks: Vec<ComposingChunk>,
+    /// LRU cache of model conversion results keyed by reading + lctx +
+    /// strategy. Content-addressed, so it survives commits and resets.
+    conversion_cache: ConversionCache,
     /// Dictionaries (system, user)
     dicts: Dictionaries,
     /// Learning cache (user conversion history)
@@ -158,6 +163,7 @@ impl InputMethodEngine {
             input_buf: InputBuffer::new(),
             live: LiveConversion::default(),
             chunks: Vec::new(),
+            conversion_cache: ConversionCache::default(),
             dicts: Dictionaries::default(),
             learning: None,
         }
@@ -227,7 +233,7 @@ impl InputMethodEngine {
         self.state = InputState::Empty;
         self.mode = ModeState::default();
         self.input_buf.clear();
-        self.live.text.clear();
+        self.live.shown = false;
         self.chunks.clear();
         self.metrics = ConversionMetrics::default();
     }
@@ -239,11 +245,9 @@ impl InputMethodEngine {
             self.state = InputState::Empty;
             self.input_buf.clear();
             // Erasing the whole buffer ends the composition: drop the live
-            // conversion text and the chunk cache so neither leaks into the
-            // next composing session (build_composing_preedit would otherwise
-            // render a stale live.text, and the chunk cache would be diffed
-            // against a buffer it no longer matches).
-            self.live.text.clear();
+            // display and the chunks so neither leaks into the next
+            // composing session.
+            self.live.shown = false;
             self.chunks.clear();
             // Temporary modes (Emoji, Alphabet) are per-composition:
             // erasing back to an empty buffer ends the session, so restore
@@ -263,7 +267,7 @@ impl InputMethodEngine {
     }
 
     /// Update state to Composing with the current preedit, returning it.
-    /// Automatically uses live conversion display when `live.text` is non-empty.
+    /// Automatically uses live conversion display when `live_text()` is non-empty.
     fn set_composing_state(&mut self) -> Preedit {
         let preedit = self.build_composing_preedit();
         self.state = InputState::Composing {
@@ -470,7 +474,7 @@ impl InputMethodEngine {
                 // Record live conversion result in learning cache
                 self.record_learning(&reading, &text);
                 self.input_buf.clear();
-                self.live.text.clear();
+                self.live.shown = false;
                 self.state = InputState::Empty;
                 self.surrounding_context = None;
                 text
