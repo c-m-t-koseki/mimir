@@ -59,9 +59,11 @@ pub struct ConversionSettings {
     pub model: Option<String>,
     /// Beam search model variant id (used on Space conversion, default model if unset)
     pub light_model: Option<String>,
-    /// Token count threshold for beam search (at or below → beam, above → greedy)
-    pub short_input_threshold: usize,
-    /// Beam width for short input
+    /// Length in chars of the tail window the beam runs over: explicit
+    /// conversion beams the last `beam_window_len` chars of the final
+    /// Japanese run and converts everything before it top-1.
+    pub beam_window_len: usize,
+    /// Beam width for the windowed beam search
     pub beam_width: usize,
     /// Maximum acceptable latency in milliseconds for auto-suggest (0 = disabled)
     /// When a main model conversion exceeds this, the engine adaptively switches to light_model
@@ -214,6 +216,28 @@ mod tests {
         assert!(settings.learning.enabled);
         assert_eq!(settings.learning.max_entries, 10000);
         assert_eq!(settings.learning.max_surface_chars, 50);
+    }
+
+    #[test]
+    fn test_unknown_keys_are_ignored() {
+        // A config written for an older version (e.g. the removed
+        // short_input_threshold key) must still load: unknown keys are
+        // ignored, the renamed setting falls back to its default, and
+        // the other overrides keep applying.
+        let mut file = NamedTempFile::new().unwrap();
+        writeln!(
+            file,
+            r#"
+[conversion]
+short_input_threshold = 10
+beam_width = 5
+"#
+        )
+        .unwrap();
+
+        let settings = Settings::load_from(file.path()).unwrap();
+        assert_eq!(settings.conversion.beam_window_len, 20);
+        assert_eq!(settings.conversion.beam_width, 5);
     }
 
     #[test]

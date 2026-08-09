@@ -139,6 +139,11 @@ pub struct InputMethodEngine {
     /// LRU cache of model conversion results keyed by reading + lctx +
     /// strategy. Content-addressed, so it survives commits and resets.
     conversion_cache: ConversionCache,
+    /// True only while a typing-refine keystroke inside a narrowed source
+    /// view passes through the composing path: its rendering is discarded
+    /// when the filtered conversion re-enters, so the auto-suggest model
+    /// call would be pure waste. Set and cleared around that one call.
+    suppress_suggest: bool,
     /// Dictionaries (system, user)
     dicts: Dictionaries,
     /// Learning cache (user conversion history)
@@ -164,6 +169,7 @@ impl InputMethodEngine {
             live: LiveConversion::default(),
             chunks: Vec::new(),
             conversion_cache: ConversionCache::default(),
+            suppress_suggest: false,
             dicts: Dictionaries::default(),
             learning: None,
         }
@@ -457,7 +463,7 @@ impl InputMethodEngine {
         let result = match &self.state {
             InputState::Empty => self.process_key_empty(key, shift_active),
             InputState::Composing { .. } => self.process_key_composing(key, shift_active),
-            InputState::Conversion { .. } => self.process_key_conversion(key),
+            InputState::Conversion { .. } => self.process_key_conversion(key, shift_active),
         };
 
         self.metrics.process_key_ms = start.elapsed().as_millis() as u64;

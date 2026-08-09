@@ -1,20 +1,18 @@
 //! Conversion strategy determination and adaptive model selection
 
-use tracing::debug;
-
 use crate::config::settings::StrategyMode;
 
 use super::*;
 
-/// Pure function to determine conversion strategy from token counts, adaptive flag,
-/// and configuration.
+/// Pure function to determine conversion strategy from the reading length
+/// (in chars), adaptive flag, and configuration.
 ///
 /// This is separated from `InputMethodEngine` to enable unit testing without model instances.
 ///
 /// `adaptive_use_light_model` is set by the engine when the main model's last
 /// conversion exceeded `max_latency_ms`. It is reset when a new word begins.
 pub(super) fn determine_conversion_strategy(
-    reading_tokens: usize,
+    reading_chars: usize,
     num_candidates: usize,
     has_light_model: bool,
     adaptive_use_light_model: bool,
@@ -22,7 +20,7 @@ pub(super) fn determine_conversion_strategy(
 ) -> ConversionStrategy {
     match config.strategy {
         StrategyMode::Adaptive => determine_adaptive_strategy(
-            reading_tokens,
+            reading_chars,
             num_candidates,
             has_light_model,
             adaptive_use_light_model,
@@ -48,7 +46,7 @@ pub(super) fn determine_conversion_strategy(
 
 /// Adaptive strategy: dynamically switch between main and light models based on latency.
 fn determine_adaptive_strategy(
-    reading_tokens: usize,
+    reading_chars: usize,
     num_candidates: usize,
     has_light_model: bool,
     adaptive_use_light_model: bool,
@@ -68,52 +66,46 @@ fn determine_adaptive_strategy(
     } else {
         // Explicit conversion (Space key)
         if adaptive_use_light_model {
-            // Main model was too slow — use light model only
-            ConversionStrategy::LightModelOnly
-        } else if reading_tokens <= config.short_input_threshold {
-            // Short input + main model is fast enough: parallel beam search
+            // Main model was too slow — beam on the light model alone
+            // (the light half of ParallelBeam), keeping the candidate
+            // count through the downgrade
+            ConversionStrategy::LightModelBeam {
+                beam_width: num_candidates.min(config.beam_width),
+            }
+        } else if reading_chars <= config.beam_window_len {
+            // Fits the beam window: parallel beam search. Explicit
+            // conversion pre-windows its reading to this length, so this
+            // is the normal path.
             ConversionStrategy::ParallelBeam {
                 beam_width: num_candidates.min(config.beam_width),
             }
         } else {
-            // Long input: proactively use light model
+            // Backstop for a beam request wider than the window (no
+            // caller does this today): light model, greedy.
             ConversionStrategy::LightModelOnly
         }
     }
 }
 
 impl InputMethodEngine {
-    /// Determine the conversion strategy based on input token counts, adaptive latency
-    /// flag, and configuration.
+    /// Determine the conversion strategy based on the reading length (in
+    /// chars), adaptive latency flag, and configuration.
     ///
-    /// Counts tokens using the main model's tokenizer and delegates to
-    /// `determine_conversion_strategy` for the actual decision logic.
+    /// Char-based on purpose: `beam_window_len` is the same unit the
+    /// tail-window conversion caps its window at, so a windowed beam
+    /// request always qualifies for the beam here.
     pub(super) fn determine_strategy(
         &self,
         reading: &str,
         num_candidates: usize,
     ) -> ConversionStrategy {
         let has_light_model = self.converters.light_kanji.is_some();
-        let katakana = karukan_engine::hiragana_to_katakana(reading);
-
-        // Count tokens using main model's tokenizer
-        let Some(converter) = &self.converters.kanji else {
+        if self.converters.kanji.is_none() {
             return ConversionStrategy::MainModelOnly;
-        };
-
-        let reading_tokens = match converter.count_input_tokens(&katakana) {
-            Ok(n) => n,
-            Err(e) => {
-                debug!(
-                    "Failed to count reading tokens: {}, fallback to MainModelOnly",
-                    e
-                );
-                return ConversionStrategy::MainModelOnly;
-            }
-        };
+        }
 
         determine_conversion_strategy(
-            reading_tokens,
+            reading.chars().count(),
             num_candidates,
             has_light_model,
             self.metrics.adaptive_use_light_model,
@@ -136,7 +128,9 @@ impl InputMethodEngine {
                 self.metrics.adaptive_use_light_model =
                     self.metrics.conversion_ms > self.config.max_latency_ms;
             }
-            ConversionStrategy::LightModelOnly | ConversionStrategy::MainModelBeam { .. } => {
+            ConversionStrategy::LightModelOnly
+            | ConversionStrategy::LightModelBeam { .. }
+            | ConversionStrategy::MainModelBeam { .. } => {
                 // Don't update — light model latency doesn't reflect main model speed
             }
         }
