@@ -7,16 +7,24 @@
 use super::conversion::width_annotation;
 use super::*;
 
-/// Ctrl+R/T rotate through the source views in the mixed list's priority
-/// order — the full list is not a stop (it is what Space already shows;
-/// Esc → Space returns to it). Fallback has no slot of its own — the
-/// plain kana ride at the tail of the rewriter view, which sits last so
-/// Ctrl+T reaches it in one press from the full list.
-const FILTER_CYCLE: [CandidateSource; 5] = [
+/// The source views Ctrl+T and Ctrl+R rotate through, grouped by what the
+/// user is looking for: what they taught the IME (learning), what it has
+/// looked up (both dictionaries, as one stop), what it guessed (the model),
+/// and the mechanical rewrites. The model sits late on purpose — Ctrl+I
+/// reaches it in one press from anywhere, so the cycle does not have to
+/// keep it near the front.
+///
+/// Ctrl+R is the reverse one, matching readline's reverse-i-search and the
+/// fact that R sits left of T.
+///
+/// The full list is not a stop: it is what Space already shows, and
+/// Esc → Space returns to it. Fallback has no slot of its own — the plain
+/// kana ride at the tail of the rewriter view, which sits last so Ctrl+R
+/// reaches it in one press from the full list.
+const FILTER_CYCLE: [CandidateSource; 4] = [
     CandidateSource::Learning,
-    CandidateSource::UserDictionary,
-    CandidateSource::Model,
     CandidateSource::Dictionary,
+    CandidateSource::Model,
     CandidateSource::Rewriter,
 ];
 
@@ -41,7 +49,7 @@ impl InputMethodEngine {
         }
     }
 
-    /// Ctrl+R / Ctrl+T: rotate to the next / previous view in
+    /// Ctrl+T / Ctrl+R: rotate to the next / previous view in
     /// [`FILTER_CYCLE`], exactly one step per press — an empty source shows
     /// 「候補なし」, never skipped, so the position stays predictable. The
     /// rotation never returns to the full list.
@@ -63,8 +71,9 @@ impl InputMethodEngine {
         self.apply_candidate_filter(FILTER_CYCLE[pos])
     }
 
-    /// Ctrl+R while composing: enter the Conversion state and immediately
-    /// narrow it one step, so the filtered view opens without Space.
+    /// Ctrl+T / Ctrl+R while composing: enter the Conversion state and
+    /// immediately narrow it one step, so the filtered view opens without
+    /// Space.
     pub(super) fn start_filtered_conversion(&mut self, direction: FilterDirection) -> EngineResult {
         if !self.enter_conversion_for_filter() {
             return EngineResult::consumed();
@@ -105,13 +114,18 @@ impl InputMethodEngine {
         let list = CandidateList::new(self.source_view(next, &reading));
         let selected = list.selected_text().unwrap_or(&reading).to_string();
         let preedit = Preedit::with_text_highlighted(&selected);
-        // Like candidate navigation, the aux shows the selected candidate's
-        // own reading (predictive entries carry a longer one), falling back
-        // to the base reading for an empty view.
-        let aux_reading = list
-            .selected()
-            .and_then(|c| c.reading.clone())
-            .unwrap_or_else(|| reading.clone());
+        // The aux leads with what the user typed, tail included — typing
+        // refines the view in place, and the selected candidate's own
+        // reading would otherwise be the only thing on the line, leaving no
+        // sign of what is being typed. A predictive entry, whose reading
+        // runs past the query, shows both: committing it records under the
+        // longer one.
+        let (base, pending) = self.live_query_split(&reading);
+        let typed = format!("{base}{pending}");
+        let aux_reading = match list.selected().and_then(|c| c.reading.as_deref()) {
+            Some(full) if full != typed => format!("{typed} → {full}"),
+            _ => typed,
+        };
         if let InputState::Conversion {
             filter,
             candidates,
@@ -143,10 +157,17 @@ impl InputMethodEngine {
         let (base, pending) = self.live_query_split(reading);
         match source {
             CandidateSource::Learning => self.lookup_learning_history(&base, &pending),
+            // One dictionary view over both dictionaries: usually the user
+            // just wants to look the reading up, not to pick which book it
+            // comes from. `search_dictionaries` puts their own entries first
+            // and dedups by surface, and each candidate still carries the
+            // dictionary it came from, so 👤 and 📚 stay distinguishable in
+            // the aux without a stop of their own.
+            //
             // A paged dictionary browser wants everything: uncapped, and
             // predictive from the first char (no flood guard).
-            source @ (CandidateSource::UserDictionary | CandidateSource::Dictionary) => self
-                .search_dictionaries(&base, &pending, usize::MAX, usize::MAX, 1, Some(source))
+            CandidateSource::UserDictionary | CandidateSource::Dictionary => self
+                .search_dictionaries(&base, &pending, usize::MAX, usize::MAX, 1, None)
                 .into_iter()
                 .map(|ac| ac.into_candidate(&base))
                 .collect(),
