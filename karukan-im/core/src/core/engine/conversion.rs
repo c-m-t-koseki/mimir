@@ -6,6 +6,7 @@ use std::collections::HashSet;
 
 use tracing::debug;
 
+use super::filter::source_for_key;
 use super::*;
 
 /// Maximum number of learning candidates to show
@@ -299,7 +300,7 @@ impl InputMethodEngine {
             debug!("Failed to initialize kanji converter: {}", e);
         }
 
-        let candidates = self.windowed_model_candidates(reading, num_candidates);
+        let candidates = self.model_candidates(reading, num_candidates);
 
         let hiragana = reading.to_string();
         let katakana = karukan_engine::hiragana_to_katakana(reading);
@@ -557,14 +558,24 @@ impl InputMethodEngine {
                         Keysym::KEY_T | Keysym::KEY_T_UPPER => {
                             return self.cycle_candidate_filter(FilterDirection::Backward);
                         }
+                        // Ctrl+J: split at the caret and rebuild, so the
+                        // alternatives cover only the text after the break.
+                        Keysym::KEY_J | Keysym::KEY_J_UPPER => {
+                            return self.rebreak_conversion();
+                        }
                         _ => {}
+                    }
+
+                    // Ctrl+Y/U/I/O: jump straight to one source's view.
+                    if let Some(source) = source_for_key(key.keysym) {
+                        return self.jump_to_source(source);
                     }
 
                     // Ctrl+1..9: select and commit that candidate. Bare
                     // digits refine below like any printable character, so
                     // typing numbers never conflicts with selection.
                     if let Some(digit) = key.keysym.digit_value() {
-                        return self.select_candidate_by_digit(digit);
+                        return self.select_shown_candidate(digit);
                     }
                 }
 
@@ -589,16 +600,42 @@ impl InputMethodEngine {
     /// is discarded, so its auto-suggest inference is suppressed.
     fn refine_through_composing(&mut self, key: &KeyEvent, shift_active: bool) -> EngineResult {
         let filter = self.state.filter();
-        self.set_composing_state();
-        self.suppress_suggest = filter.is_some();
-        let result = self.process_key_composing(key, shift_active);
-        self.suppress_suggest = false;
+        let result = self.in_composing(filter.is_some(), |engine| {
+            engine.process_key_composing(key, shift_active)
+        });
         if let Some(source) = filter
             && matches!(self.state, InputState::Composing { .. })
         {
             return self.start_conversion_with_filter(source);
         }
         result
+    }
+
+    /// Insert a chunk break at the caret without leaving the conversion.
+    /// The span is the last chunk, so breaking narrows what the beam
+    /// covers; the rebuilt list keeps the active source filter. The
+    /// intermediate composing render is discarded, so its auto-suggest
+    /// inference is suppressed.
+    fn rebreak_conversion(&mut self) -> EngineResult {
+        let filter = self.state.filter();
+        self.in_composing(true, |engine| engine.insert_chunk_break());
+        match filter {
+            Some(source) => self.start_conversion_with_filter(source),
+            None => self.start_conversion(LearningLookup::Use),
+        }
+    }
+
+    /// Drop back to the untouched composition and run `edit` there. Set
+    /// `discard_render` when the caller rebuilds the conversion afterwards:
+    /// the composing render is thrown away, so its auto-suggest inference
+    /// would be pure waste. The flag lives and dies inside this call, so no
+    /// other path can inherit it.
+    fn in_composing<R>(&mut self, discard_render: bool, edit: impl FnOnce(&mut Self) -> R) -> R {
+        self.set_composing_state();
+        self.suppress_suggest = discard_render;
+        let out = edit(self);
+        self.suppress_suggest = false;
+        out
     }
 
     /// Get selected text and reading from conversion state, or None if not in conversion
@@ -792,33 +829,9 @@ impl InputMethodEngine {
     pub fn select_candidate_on_page(&mut self, page_index: usize) -> EngineResult {
         let start = std::time::Instant::now();
         self.metrics.conversion_ms = 0;
-        let result = self.select_candidate_by_digit(page_index + 1);
+        let result = self.select_shown_candidate(page_index + 1);
         self.metrics.process_key_ms = start.elapsed().as_millis() as u64;
         result
-    }
-
-    /// Select and commit the candidate at `digit` (1-9) on the current page.
-    fn select_candidate_by_digit(&mut self, digit: usize) -> EngineResult {
-        let (selected_text, reading) = {
-            let Some(candidates) = self.state.candidates_mut() else {
-                return EngineResult::not_consumed();
-            };
-
-            if candidates.select_on_page(digit).is_none() {
-                return EngineResult::consumed();
-            }
-
-            let text = candidates.selected_text().unwrap_or("").to_string();
-            let reading = candidates.selected().and_then(|c| c.reading.clone());
-            (text, reading)
-        };
-
-        self.finish_conversion(&selected_text, &reading);
-
-        EngineResult::consumed()
-            .with_action(EngineAction::HideCandidates)
-            .with_action(EngineAction::HideAuxText)
-            .with_action(EngineAction::Commit(selected_text))
     }
 
     /// Update preedit after candidate selection change

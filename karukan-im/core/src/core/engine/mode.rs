@@ -63,4 +63,31 @@ impl InputMethodEngine {
 
         EngineResult::consumed().with_action(aux)
     }
+
+    /// Ctrl+Shift+V: turn the aux line's debug details on or off. The next
+    /// render picks it up, so no state has to be rebuilt here.
+    pub(super) fn toggle_verbose(&mut self) -> EngineResult {
+        self.config.verbose = !self.config.verbose;
+        let mode = if self.config.verbose { "ON" } else { "OFF" };
+        debug!("Verbose display toggled: {}", mode);
+        // Re-render the line the user is looking at, so the change shows now
+        // rather than on the next keystroke. Nothing is being typed in the
+        // Empty state, so there the toggle reports itself instead.
+        let aux = match &self.state {
+            InputState::Conversion {
+                reading,
+                candidates,
+                ..
+            } => {
+                let shown = candidates
+                    .selected()
+                    .and_then(|c| c.reading.clone())
+                    .unwrap_or_else(|| reading.clone());
+                self.format_aux_conversion_with_page(&shown, Some(candidates))
+            }
+            InputState::Composing { .. } => self.format_aux_suggest(),
+            InputState::Empty => format!("詳細表示: {mode}"),
+        };
+        EngineResult::consumed().with_action(EngineAction::UpdateAuxText(aux))
+    }
 }

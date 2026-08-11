@@ -1,5 +1,6 @@
 //! Composing input handling (Empty and Composing states)
 
+use super::filter::source_for_key;
 use super::*;
 
 /// Append candidates to `target`, skipping duplicates by text.
@@ -94,7 +95,7 @@ impl InputMethodEngine {
             .collect();
         append_candidates_dedup(&mut all_candidates, model_candidates);
         append_candidates_dedup(&mut all_candidates, self.lookup_dict_candidates(reading));
-        let aux = self.format_aux_suggest(reading);
+        let aux = self.format_aux_suggest();
         EngineResult::consumed()
             .with_action(EngineAction::UpdatePreedit(preedit))
             .with_action(self.show_suggestions(all_candidates))
@@ -108,37 +109,11 @@ impl InputMethodEngine {
         EngineAction::ShowCandidates(self.shown_suggestions.clone())
     }
 
-    /// Ctrl+1..9 while composing: commit the numbered candidate straight from
-    /// the suggestion window, without a detour through the Conversion state.
-    /// Consumed even with nothing to select, so the chord never leaks to the
-    /// application.
-    fn select_suggestion_by_digit(&mut self, digit: usize) -> EngineResult {
-        let Some(candidate) = self.shown_suggestions.select_on_page(digit) else {
-            return EngineResult::consumed();
-        };
-        let text = candidate.text.clone();
-        let reading = candidate
-            .reading
-            .clone()
-            .unwrap_or_else(|| self.input_buf.reading());
-        if text.is_empty() {
-            return EngineResult::consumed();
-        }
-
-        self.record_learning(&reading, &text);
-        self.end_composition();
-
-        EngineResult::consumed()
-            .with_action(EngineAction::Commit(text))
-            .with_action(EngineAction::HideCandidates)
-            .with_action(EngineAction::HideAuxText)
-    }
-
     /// Process key in empty state
     pub(super) fn process_key_empty(&mut self, key: &KeyEvent, shift_active: bool) -> EngineResult {
         // Ctrl+Space: start input with full-width space
         if key.modifiers.control_key && key.keysym == Keysym::SPACE {
-            self.input_buf.clear();
+            self.clear_composition();
             self.input_buf.push_direct('\u{3000}');
             let preedit = self.set_composing_state();
             return EngineResult::consumed()
@@ -201,7 +176,7 @@ impl InputMethodEngine {
     /// Start input with a character (first character of a new input session).
     /// In alphabet mode, inserts directly; otherwise goes through romaji conversion.
     pub(super) fn start_input(&mut self, ch: char) -> EngineResult {
-        self.input_buf.clear();
+        self.clear_composition();
 
         if self.mode.current() == InputMode::Alphabet {
             self.input_buf.push_direct(ch);
@@ -222,7 +197,7 @@ impl InputMethodEngine {
 
     /// Insert a full-width space (U+3000) after the active elements
     pub(super) fn input_fullwidth_space(&mut self) -> EngineResult {
-        self.input_buf.push_direct('\u{3000}');
+        self.edit_with_chunk_breaks(|e| e.input_buf.push_direct('\u{3000}'));
         self.refresh_input_state()
     }
 
@@ -237,6 +212,8 @@ impl InputMethodEngine {
             match key.keysym {
                 // Ctrl+Space: insert full-width space (U+3000)
                 Keysym::SPACE => return self.input_fullwidth_space(),
+                // Ctrl+J: start a new live-conversion chunk at the caret
+                Keysym::KEY_J | Keysym::KEY_J_UPPER => return self.insert_chunk_break(),
                 // Ctrl+K: enter katakana mode
                 Keysym::KEY_K | Keysym::KEY_K_UPPER => return self.enter_katakana_mode(),
                 // Ctrl+A: move to beginning (Emacs-style Home)
@@ -258,11 +235,15 @@ impl InputMethodEngine {
                 }
                 _ => {}
             }
+            // Ctrl+Y/U/I/O: jump straight to one source's view.
+            if let Some(source) = source_for_key(key.keysym) {
+                return self.jump_to_source(source);
+            }
             // Ctrl+1..9: commit the numbered candidate from the suggestion
             // window. Bare digits stay plain text input, so numbers can be
             // typed mid-word without ever selecting a candidate.
             if let Some(digit) = key.keysym.digit_value() {
-                return self.select_suggestion_by_digit(digit);
+                return self.select_shown_candidate(digit);
             }
         }
 
@@ -325,8 +306,7 @@ impl InputMethodEngine {
     /// the candidate list so the user sees emoji suggestions appear
     /// the moment they press `:`.
     pub(super) fn start_emoji_mode(&mut self) -> EngineResult {
-        self.input_buf.clear();
-        self.live.shown = false;
+        self.clear_composition();
         // Remember where the user was so commit/cancel/erase-to-empty
         // can drop them back into the same mode (e.g. Katakana stays
         // Katakana). ModeState guards against clobbering the saved mode
@@ -353,14 +333,14 @@ impl InputMethodEngine {
     /// In alphabet mode, inserts directly; otherwise goes through romaji conversion.
     pub(super) fn input_char(&mut self, ch: char) -> EngineResult {
         if matches!(self.mode.current(), InputMode::Alphabet | InputMode::Emoji) {
-            self.input_buf.push_direct(ch);
+            self.edit_with_chunk_breaks(|e| e.input_buf.push_direct(ch));
             return self.refresh_input_state();
         }
 
         // PassThrough chars accumulate in the preedit alongside hiragana,
         // allowing users to compose `「」`, type `'word'`, and access symbol
         // variants from the candidate list.
-        self.input_buf.push_romaji(ch, &self.converters.romaji);
+        self.edit_with_chunk_breaks(|e| e.input_buf.push_romaji(ch, &e.converters.romaji));
 
         if let Some(result) = self.try_reset_if_empty() {
             return result;

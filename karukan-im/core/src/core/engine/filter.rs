@@ -20,7 +20,27 @@ const FILTER_CYCLE: [CandidateSource; 5] = [
     CandidateSource::Rewriter,
 ];
 
+/// Ctrl+I opens the AI view directly. It is the one view worth a key of
+/// its own: the others are a step or two along the cycle and are opened
+/// rarely, and every extra chord is one more thing to collide with.
+pub(super) fn source_for_key(keysym: Keysym) -> Option<CandidateSource> {
+    match keysym {
+        Keysym::KEY_I | Keysym::KEY_I_UPPER => Some(CandidateSource::Model),
+        _ => None,
+    }
+}
+
 impl InputMethodEngine {
+    /// Show `source`'s view directly, from either state: entering the
+    /// conversion first when composing.
+    pub(super) fn jump_to_source(&mut self, source: CandidateSource) -> EngineResult {
+        match &self.state {
+            InputState::Conversion { .. } => self.apply_candidate_filter(source),
+            InputState::Composing { .. } => self.start_conversion_with_filter(source),
+            InputState::Empty => EngineResult::not_consumed(),
+        }
+    }
+
     /// Ctrl+R / Ctrl+T: rotate to the next / previous view in
     /// [`FILTER_CYCLE`], exactly one step per press — an empty source shows
     /// 「候補なし」, never skipped, so the position stays predictable. The
@@ -163,11 +183,11 @@ impl InputMethodEngine {
         }
     }
 
-    /// Model candidates for the narrowed AI view — the same tail-window
+    /// Model candidates for the narrowed AI view — the same split
     /// conversion as the mixed list, so right after Space this is normally
     /// a pure cache replay of the list's model rows.
     fn model_source_view(&mut self, reading: &str) -> Vec<Candidate> {
-        self.windowed_model_candidates(reading, self.config.num_candidates)
+        self.model_candidates(reading, self.config.num_candidates)
             .into_iter()
             .map(|text| Candidate {
                 text,
