@@ -113,9 +113,11 @@ impl InputMethodEngine {
         )
     }
 
-    /// Update the adaptive model switching flag based on the strategy used and
-    /// measured latency. Only updates when the main model was involved.
-    pub(super) fn update_adaptive_model_flag(&mut self, strategy: &ConversionStrategy) {
+    /// Update the adaptive switching flag from a measured main-model greedy
+    /// latency. Only an actual main greedy run may feed this: a beam's
+    /// one-shot cost must not read as "the main model is too slow" and
+    /// downgrade the rest of the word (flipping every cache key with it).
+    pub(super) fn update_adaptive_model_flag(&mut self, main_ms: u64) {
         // Only Adaptive mode uses the adaptive flag
         if self.config.strategy != StrategyMode::Adaptive {
             return;
@@ -123,16 +125,6 @@ impl InputMethodEngine {
         if self.config.max_latency_ms == 0 || self.converters.light_kanji.is_none() {
             return;
         }
-        match strategy {
-            ConversionStrategy::MainModelOnly | ConversionStrategy::ParallelBeam { .. } => {
-                self.metrics.adaptive_use_light_model =
-                    self.metrics.conversion_ms > self.config.max_latency_ms;
-            }
-            ConversionStrategy::LightModelOnly
-            | ConversionStrategy::LightModelBeam { .. }
-            | ConversionStrategy::MainModelBeam { .. } => {
-                // Don't update — light model latency doesn't reflect main model speed
-            }
-        }
+        self.metrics.adaptive_use_light_model = main_ms > self.config.max_latency_ms;
     }
 }

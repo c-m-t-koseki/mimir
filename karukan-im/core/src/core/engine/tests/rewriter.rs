@@ -4,7 +4,6 @@
 //! so they verify behaviour that holds independently of model output.
 
 use std::collections::HashSet;
-use std::io::Write;
 
 use karukan_engine::{Dictionary, RewriterChain};
 
@@ -27,21 +26,17 @@ fn composing_engine(reading: &str) -> InputMethodEngine {
 fn conversion_texts(reading: &str) -> Vec<String> {
     let mut engine = composing_engine(reading);
     engine
-        .build_conversion_candidates(reading, reading, "", 9, false)
+        .build_conversion_candidates(reading, reading, "", 9, LearningLookup::Use)
         .into_iter()
         .map(|c| c.text)
         .collect()
 }
 
-/// Build a one-entry user dictionary as a temp JSON file and load it.
+/// Build a one-entry user dictionary and load it.
 fn user_dict_with(reading: &str, surface: &str) -> Dictionary {
-    let mut tmp = tempfile::NamedTempFile::new().unwrap();
-    let json = format!(
+    dict_from_json(&format!(
         r#"[{{"reading":"{reading}","candidates":[{{"surface":"{surface}","score":1.0}}]}}]"#
-    );
-    tmp.write_all(json.as_bytes()).unwrap();
-    tmp.flush().unwrap();
-    Dictionary::build_from_json(tmp.path()).unwrap()
+    ))
 }
 
 /// Drive the engine by typing a string of characters.
@@ -134,7 +129,7 @@ fn rewriter_does_not_expand_dictionary_candidates() {
     engine.dicts.user = Some(user_dict_with("てすと", ","));
 
     let texts: Vec<String> = engine
-        .build_conversion_candidates("てすと", "てすと", "", 9, false)
+        .build_conversion_candidates("てすと", "てすと", "", 9, LearningLookup::Use)
         .into_iter()
         .map(|c| c.text)
         .collect();
@@ -151,7 +146,7 @@ fn rewriter_candidates_only_derive_from_user_input() {
     // rewrite of the typed reading. Guards against future regressions where
     // somebody re-introduces rewriting over dictionary/model/fallback entries.
     let mut engine = composing_engine("あ");
-    let candidates = engine.build_conversion_candidates("あ", "あ", "", 9, false);
+    let candidates = engine.build_conversion_candidates("あ", "あ", "", 9, LearningLookup::Use);
 
     let allowed: HashSet<String> = RewriterChain::default_chain()
         .rewrite_all(&["あ".to_string()])
@@ -187,7 +182,7 @@ fn alphabet_input_emits_width_and_case_variants() {
 #[test]
 fn alphabet_variants_carry_width_case_descriptions() {
     let mut engine = composing_engine("abc");
-    let candidates = engine.build_conversion_candidates("abc", "abc", "", 9, false);
+    let candidates = engine.build_conversion_candidates("abc", "abc", "", 9, LearningLookup::Use);
     let upper = candidates.iter().find(|c| c.text == "ABC").unwrap();
     let full_lower = candidates.iter().find(|c| c.text == "ａｂｃ").unwrap();
     let full_upper = candidates.iter().find(|c| c.text == "ＡＢＣ").unwrap();
@@ -231,7 +226,7 @@ fn typed_symbol_itself_is_annotated_via_global_lookup() {
     // (not from the rewriter). The post-pass enrichment should still attach
     // mozc's description "始めかぎ括弧" because `「` is a known symbol.
     let mut engine = composing_engine("「");
-    let candidates = engine.build_conversion_candidates("「", "「", "", 9, false);
+    let candidates = engine.build_conversion_candidates("「", "「", "", 9, LearningLookup::Use);
 
     let kagi = candidates.iter().find(|c| c.text == "「").unwrap();
     assert_eq!(
@@ -257,7 +252,7 @@ fn katakana_variants_carry_width_form_description() {
     // half-width katakana → `[半]カタカナ`. The hiragana fallback also picks
     // up `[全]ひらがな` since hiragana is intrinsically full-width.
     let mut engine = composing_engine("あ");
-    let candidates = engine.build_conversion_candidates("あ", "あ", "", 9, false);
+    let candidates = engine.build_conversion_candidates("あ", "あ", "", 9, LearningLookup::Use);
 
     let hira = candidates.iter().find(|c| c.text == "あ").unwrap();
     assert_eq!(

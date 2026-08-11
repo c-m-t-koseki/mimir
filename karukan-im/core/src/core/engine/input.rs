@@ -28,13 +28,9 @@ impl InputMethodEngine {
             return EngineResult::consumed().with_action(EngineAction::UpdatePreedit(preedit));
         }
 
-        // Run auto-suggest via chunked conversion. Normally skipped in alphabet
-        // mode (raw latin has no hiragana to convert), but if the buffer still
-        // contains kana — e.g. the user typed hiragana, switched to alphabet mode,
-        // and kept typing — keep converting the mixed reading so live conversion
-        // stays alive. `chunked_auto_suggest` splits long input into
-        // bounded-length chunks so per-keystroke latency stays flat; for input
-        // within one chunk this is identical to a whole-buffer call.
+        // Auto-suggest via chunked conversion. Skipped in alphabet mode
+        // unless the buffer still contains kana (mode switched mid-word),
+        // so live conversion stays alive on a mixed reading.
         let convert = !self.suppress_suggest
             && !full_reading.is_empty()
             && (self.mode.current() != InputMode::Alphabet
@@ -49,27 +45,26 @@ impl InputMethodEngine {
         };
 
         let Some((candidates, reading)) = candidates else {
-            // No useful AI suggestion — still show learning + dictionary + rule-based
-            // rewriter variants. The rewriter path produces mozc-style symbol variants
-            // (e.g. `「` → `『`, `【`, ...) for symbol-only inputs where the model is skipped.
+            // No useful model suggestion — still show learning, dictionary,
+            // and rewriter variants (e.g. `「` → `『`, `【`, …).
             self.live.shown = false;
             let preedit = self.set_composing_state();
             let reading = full_reading;
             let mut all_candidates = self.lookup_learning_candidates(&reading);
             append_candidates_dedup(&mut all_candidates, self.lookup_dict_candidates(&reading));
             append_candidates_dedup(&mut all_candidates, self.lookup_rewriter_variants(&reading));
+            let aux = self.format_aux_composing();
             if all_candidates.is_empty() {
+                self.shown_suggestions = CandidateList::default();
                 return EngineResult::consumed()
                     .with_action(EngineAction::UpdatePreedit(preedit))
                     .with_action(EngineAction::HideCandidates)
-                    .with_action(EngineAction::UpdateAuxText(self.format_aux_composing()));
+                    .with_action(EngineAction::UpdateAuxText(aux));
             }
             return EngineResult::consumed()
                 .with_action(EngineAction::UpdatePreedit(preedit))
-                .with_action(EngineAction::ShowCandidates(CandidateList::new(
-                    all_candidates,
-                )))
-                .with_action(EngineAction::UpdateAuxText(self.format_aux_composing()));
+                .with_action(self.show_suggestions(all_candidates))
+                .with_action(EngineAction::UpdateAuxText(aux));
         };
 
         // Live conversion mode: show converted text in preedit. The displayed
@@ -86,14 +81,10 @@ impl InputMethodEngine {
         self.suggest_result(candidates, &reading)
     }
 
-    /// Build the auto-suggest result shared by live conversion and normal
-    /// auto-suggest: composing preedit, candidate list, and aux text.
-    ///
-    /// Candidate ordering is learning → model → dictionary. Including the
-    /// model candidates guarantees the list is never empty, so the candidate
-    /// window — whose aux line is where frontends show the raw reading once
-    /// the preedit displays converted text — stays on screen for the whole
-    /// live conversion.
+    /// Build the auto-suggest result (preedit, candidates, aux), ordered
+    /// learning → model → dictionary. The model candidates keep the list
+    /// non-empty, so the candidate window — whose aux line shows the raw
+    /// reading — stays on screen for the whole live conversion.
     fn suggest_result(&mut self, candidates: Vec<String>, reading: &str) -> EngineResult {
         let preedit = self.set_composing_state();
         let mut all_candidates = self.lookup_learning_candidates(reading);
@@ -106,10 +97,41 @@ impl InputMethodEngine {
         let aux = self.format_aux_suggest(reading);
         EngineResult::consumed()
             .with_action(EngineAction::UpdatePreedit(preedit))
-            .with_action(EngineAction::ShowCandidates(CandidateList::new(
-                all_candidates,
-            )))
+            .with_action(self.show_suggestions(all_candidates))
             .with_action(EngineAction::UpdateAuxText(aux))
+    }
+
+    /// Show `candidates` in the composing suggestion window, remembering the
+    /// list so Ctrl+digit can select from exactly what is on screen.
+    fn show_suggestions(&mut self, candidates: Vec<Candidate>) -> EngineAction {
+        self.shown_suggestions = CandidateList::new(candidates);
+        EngineAction::ShowCandidates(self.shown_suggestions.clone())
+    }
+
+    /// Ctrl+1..9 while composing: commit the numbered candidate straight from
+    /// the suggestion window, without a detour through the Conversion state.
+    /// Consumed even with nothing to select, so the chord never leaks to the
+    /// application.
+    fn select_suggestion_by_digit(&mut self, digit: usize) -> EngineResult {
+        let Some(candidate) = self.shown_suggestions.select_on_page(digit) else {
+            return EngineResult::consumed();
+        };
+        let text = candidate.text.clone();
+        let reading = candidate
+            .reading
+            .clone()
+            .unwrap_or_else(|| self.input_buf.reading());
+        if text.is_empty() {
+            return EngineResult::consumed();
+        }
+
+        self.record_learning(&reading, &text);
+        self.end_composition();
+
+        EngineResult::consumed()
+            .with_action(EngineAction::Commit(text))
+            .with_action(EngineAction::HideCandidates)
+            .with_action(EngineAction::HideAuxText)
     }
 
     /// Process key in empty state
@@ -124,21 +146,10 @@ impl InputMethodEngine {
                 .with_action(EngineAction::UpdateAuxText(self.format_aux_composing()));
         }
 
-        // Bare Space from Empty state:
-        //
-        // * Hiragana mode → commit a full-width `　` directly, matching
-        //   the Japanese-IME convention. We deliberately do NOT enter
-        //   Composing here: if we did, the next Space the user typed
-        //   would be interpreted by `process_key_composing` as the
-        //   conversion trigger and an unwanted candidate window would
-        //   appear after two spaces in a row.
-        // * Any other mode → return `not_consumed` so the OS delivers
-        //   a normal half-width ASCII space to the application. The
-        //   user is either typing ASCII (Alphabet) or in an edge mode
-        //   (Katakana / Emoji) where injecting `　` would be wrong.
-        //
-        // The full-width space gesture from Empty in any mode is
-        // `Ctrl+Space` (above), which seeds a Composing session.
+        // Bare Space from Empty: Hiragana mode commits `　` directly —
+        // without entering Composing, where a second Space would open an
+        // unwanted candidate window. Other modes pass it through as an
+        // ASCII space.
         if key.keysym == Keysym::SPACE && !key.modifiers.control_key && !key.modifiers.alt_key {
             return if self.mode.current() == InputMode::Hiragana {
                 EngineResult::consumed().with_action(EngineAction::Commit("\u{3000}".to_string()))
@@ -147,17 +158,9 @@ impl InputMethodEngine {
             };
         }
 
-        // `:` from Empty state enters emoji shortcode mode — `:pien` stays
-        // as `:pien` literally (no romaji conversion) while emoji candidates
-        // are surfaced via the rewriter. The mode auto-exits back to Hiragana
-        // on Escape or commit, so the user's next word lands in kana mode
-        // again without an explicit toggle.
-        //
-        // Two keysym shapes can produce `:` depending on how fcitx5
-        // resolves the layout: (a) the X11 `colon` keysym (0x003A)
-        // arriving directly, or (b) the `semicolon` keysym (0x003B)
-        // with shift held. Accept both so we don't depend on which
-        // shape the upstream stack happens to emit.
+        // `:` from Empty enters emoji shortcode mode. Accept both keysym
+        // shapes a layout can emit for `:` — the `colon` keysym directly,
+        // or `semicolon` with shift held.
         let typed_colon =
             key.to_char() == Some(':') || (shift_active && key.keysym == Keysym(b';' as u32));
         if typed_colon
@@ -248,12 +251,18 @@ impl InputMethodEngine {
                 // (first source / the cycle's tail), straight from typing —
                 // no Space needed to reach the filtered view.
                 Keysym::KEY_R | Keysym::KEY_R_UPPER => {
-                    return self.start_filtered_conversion(true);
+                    return self.start_filtered_conversion(FilterDirection::Forward);
                 }
                 Keysym::KEY_T | Keysym::KEY_T_UPPER => {
-                    return self.start_filtered_conversion(false);
+                    return self.start_filtered_conversion(FilterDirection::Backward);
                 }
                 _ => {}
+            }
+            // Ctrl+1..9: commit the numbered candidate from the suggestion
+            // window. Bare digits stay plain text input, so numbers can be
+            // typed mid-word without ever selecting a candidate.
+            if let Some(digit) = key.keysym.digit_value() {
+                return self.select_suggestion_by_digit(digit);
             }
         }
 
@@ -266,8 +275,8 @@ impl InputMethodEngine {
             // Tab triggers conversion that bypasses the learning cache, so users
             // can escape stale or unwanted learned entries (mozc binds Tab to a
             // different conversion path — PredictAndConvert — in the same spirit).
-            Keysym::TAB => self.start_conversion(true),
-            Keysym::SPACE | Keysym::DOWN => self.start_conversion(false),
+            Keysym::TAB => self.start_conversion(LearningLookup::Skip),
+            Keysym::SPACE | Keysym::DOWN => self.start_conversion(LearningLookup::Use),
             Keysym::LEFT => self.move_caret_left(),
             Keysym::RIGHT => self.move_caret_right(),
             Keysym::HOME => self.move_caret_home(),
@@ -360,59 +369,41 @@ impl InputMethodEngine {
         self.refresh_input_state()
     }
 
-    /// Commit the current hiragana input (or katakana if in katakana mode)
-    /// In live conversion mode, commits the converted text instead of hiragana.
-    pub(super) fn commit_composing(&mut self) -> EngineResult {
+    /// Resolve what committing the composition produces, as (reading, text).
+    /// Settles pending romaji as a side effect. Emoji mode commits the first
+    /// emoji candidate (falling back to the literal query), katakana mode
+    /// commits katakana, live conversion commits the converted text.
+    pub(super) fn resolve_composing_commit(&mut self) -> (String, String) {
         // Resolve the live text before settling: it needs the pending run
         let live_text = self.live_text_with_pending();
-
-        // Settle any pending romaji
         self.settle_romaji();
-
         let reading = self.input_buf.reading();
         let text = if self.mode.current() == InputMode::Emoji {
-            // Emoji mode: Enter should select the first emoji candidate the
-            // EmojiRewriter would surface, not commit the literal `:smile`.
-            // Falls back to the literal buffer when nothing matches (e.g.
-            // `:xyz`) so the user still sees what they typed.
             self.first_emoji_candidate(&reading)
                 .unwrap_or_else(|| reading.clone())
         } else if self.mode.current() == InputMode::Katakana {
-            // Katakana mode always commits katakana, ignoring live conversion
             karukan_engine::hiragana_to_katakana(&reading)
         } else if !live_text.is_empty() {
-            // Live conversion active: commit converted text
             live_text
         } else {
             reading.clone()
         };
+        (reading, text)
+    }
+
+    /// Commit the current composition (Enter).
+    pub(super) fn commit_composing(&mut self) -> EngineResult {
+        let (reading, text) = self.resolve_composing_commit();
 
         if text.is_empty() {
-            self.state = InputState::Empty;
-            self.input_buf.clear();
-            self.live.shown = false;
-            self.chunks.clear();
+            self.end_composition();
             return EngineResult::consumed()
                 .with_action(EngineAction::HideCandidates)
                 .with_action(EngineAction::HideAuxText);
         }
 
-        // Record live conversion result in learning cache.
-        // Skip the learning record for emoji mode — the buffer holds
-        // a Slack-style query like `:smile`, not a hiragana reading,
-        // so storing it would corrupt the kana-keyed learning cache.
-        if self.mode.current() != InputMode::Emoji {
-            self.record_learning(&reading, &text);
-        }
-
-        self.input_buf.clear();
-        self.live.shown = false;
-        self.chunks.clear();
-        self.state = InputState::Empty;
-        // Temporary modes (Emoji, Alphabet) end with the composition:
-        // committing the word returns to the prior mode, so the next word
-        // is converted again (#37).
-        self.mode.exit_temporary();
+        self.record_learning(&reading, &text);
+        self.end_composition();
 
         // HideCandidates is required here: the auto-suggest/live-conversion
         // window may be open while Composing, and the macOS frontend's
@@ -450,15 +441,7 @@ impl InputMethodEngine {
             None
         };
 
-        self.input_buf.clear();
-        self.live.shown = false;
-        self.chunks.clear();
-        self.state = InputState::Empty;
-        // Temporary modes (Emoji, Alphabet) are per-session: cancelling
-        // returns the user to whatever mode they were in before, so their
-        // next word doesn't unexpectedly stay in ASCII-passthrough mode
-        // (#37).
-        self.mode.exit_temporary();
+        self.end_composition();
 
         if let Some(literal) = emoji_literal {
             EngineResult::consumed()

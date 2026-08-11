@@ -1,15 +1,6 @@
 //! Predictive dictionary lookup: readings extending the typed prefix.
 
-use std::io::Write;
-
 use super::*;
-
-fn dict_from_json(json: &str) -> Dictionary {
-    let mut tmp = tempfile::NamedTempFile::new().unwrap();
-    tmp.write_all(json.as_bytes()).unwrap();
-    tmp.flush().unwrap();
-    Dictionary::build_from_json(tmp.path()).unwrap()
-}
 
 #[test]
 fn predictive_dict_candidates_carry_full_reading() {
@@ -129,7 +120,7 @@ fn conversion_list_gets_all_predictive_candidates() {
     ));
 
     let conversion: Vec<String> = engine
-        .build_conversion_candidates("わせ", "わせ", "", 1, false)
+        .build_conversion_candidates("わせ", "わせ", "", 1, LearningLookup::Use)
         .into_iter()
         .map(|c| c.text)
         .collect();

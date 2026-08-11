@@ -292,28 +292,14 @@ fn test_typing_narrows_within_the_filtered_view() {
             .expect("aux")
             .starts_with("[変換:👤]")
     );
-    let texts: Vec<String> = engine
-        .candidates()
-        .unwrap()
-        .candidates()
-        .iter()
-        .map(|c| c.text.clone())
-        .collect();
-    assert_eq!(texts, vec!["亜", "藍"]);
+    assert_eq!(shown_texts(&engine), vec!["亜", "藍"]);
 
     // Typing narrows the SAME view: reading grows to あい, only 藍 stays.
     let result = engine.process_key(&press('i'));
     let aux = last_aux_text(&result).expect("aux");
     assert!(aux.starts_with("[変換:👤]"), "aux was: {aux}");
     assert!(matches!(engine.state(), InputState::Conversion { .. }));
-    let texts: Vec<String> = engine
-        .candidates()
-        .unwrap()
-        .candidates()
-        .iter()
-        .map(|c| c.text.clone())
-        .collect();
-    assert_eq!(texts, vec!["藍"]);
+    assert_eq!(shown_texts(&engine), vec!["藍"]);
 
     // A pending consonant keeps the view too (tail-aware narrowing).
     let result = engine.process_key(&press('k'));
@@ -338,27 +324,13 @@ fn test_backspace_widens_within_the_filtered_view() {
     engine.process_key(&press_key(Keysym::SPACE));
     engine.process_key(&press_ctrl(Keysym::KEY_R)); // 📝（候補なし）
     engine.process_key(&press_ctrl(Keysym::KEY_R)); // 👤: [藍]
-    let texts: Vec<String> = engine
-        .candidates()
-        .unwrap()
-        .candidates()
-        .iter()
-        .map(|c| c.text.clone())
-        .collect();
-    assert_eq!(texts, vec!["藍"]);
+    assert_eq!(shown_texts(&engine), vec!["藍"]);
 
     let result = engine.process_key(&press_key(Keysym::BACKSPACE));
     let aux = last_aux_text(&result).expect("aux text action");
     assert!(aux.starts_with("[変換:👤]"), "aux was: {aux}");
     assert!(matches!(engine.state(), InputState::Conversion { .. }));
-    let texts: Vec<String> = engine
-        .candidates()
-        .unwrap()
-        .candidates()
-        .iter()
-        .map(|c| c.text.clone())
-        .collect();
-    assert_eq!(texts, vec!["亜", "藍"]);
+    assert_eq!(shown_texts(&engine), vec!["亜", "藍"]);
 
     // Emptying the buffer leaves the conversion entirely.
     engine.process_key(&press_key(Keysym::BACKSPACE));
@@ -696,6 +668,48 @@ fn test_space_conversion_beams_the_tail_window() {
     engine.process_key(&press_key(Keysym::SPACE));
     let texts = shown_texts(&engine);
     assert_eq!(&texts[..2], ["合い上", "合い植え"], "texts were: {texts:?}");
+}
+
+#[test]
+fn test_space_top1_is_the_live_grid_conversion_when_the_window_splits() {
+    // The tail window cuts at a raw char offset, so the seam can degrade
+    // both sides — while live conversion, chunking on its own grid, had
+    // the reading intact. The whole-reading top-1 on the live grid (a
+    // cache hit for what the user was just shown) must ride first, ahead
+    // of the seam-split window results.
+    let mut engine = InputMethodEngine::new();
+    engine.config.beam_window_len = 2;
+    seed_model_cache(&mut engine, "アイウエ", "", &["愛飢え"]);
+    seed_model_cache(&mut engine, "アイ", "", &["合い"]);
+    seed_model_cache(&mut engine, "ウエ", "合い", &["上", "植え"]);
+    for ch in ['a', 'i', 'u', 'e'] {
+        engine.process_key(&press(ch));
+    }
+    engine.process_key(&press_key(Keysym::SPACE));
+    let texts = shown_texts(&engine);
+    assert_eq!(
+        &texts[..3],
+        ["愛飢え", "合い上", "合い植え"],
+        "texts were: {texts:?}"
+    );
+}
+
+#[test]
+fn test_model_view_top1_is_the_live_grid_conversion_when_the_window_splits() {
+    // The AI view shares the injected head: live-grid top-1 first, then
+    // the windowed beam alternatives.
+    let mut engine = InputMethodEngine::new();
+    engine.config.beam_window_len = 2;
+    seed_model_cache(&mut engine, "アイウエ", "", &["愛飢え"]);
+    seed_model_cache(&mut engine, "アイ", "", &["合い"]);
+    seed_model_cache(&mut engine, "ウエ", "合い", &["上", "植え"]);
+    for ch in ['a', 'i', 'u', 'e'] {
+        engine.process_key(&press(ch));
+    }
+    cycle_expecting_empty(&mut engine, true, CandidateSource::Learning);
+    cycle_expecting_empty(&mut engine, true, CandidateSource::UserDictionary);
+    cycle_expecting(&mut engine, true, CandidateSource::Model);
+    assert_eq!(shown_texts(&engine), vec!["愛飢え", "合い上", "合い植え"]);
 }
 
 #[test]

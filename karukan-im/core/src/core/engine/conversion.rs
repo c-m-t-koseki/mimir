@@ -1,12 +1,11 @@
-//! Conversion state handling (candidates, commit). The live-conversion
-//! chunking lives in the sibling `chunk` module.
+//! Conversion state handling: building the mixed candidate list, key
+//! handling, and commit. Model dispatch lives in the sibling `model`
+//! module, the Ctrl+R source views in `filter`, live chunking in `chunk`.
 
 use std::collections::HashSet;
-use std::time::Instant;
 
 use tracing::debug;
 
-use super::chunk::{group_chunks, is_japanese};
 use super::*;
 
 /// Maximum number of learning candidates to show
@@ -21,19 +20,6 @@ const MAX_PREDICTIVE_SUGGESTIONS: usize = 3;
 /// single key would flood the list from a large dictionary
 const MIN_PREDICTIVE_PREFIX_CHARS: usize = 2;
 
-/// Ctrl+R/T rotate through the source views in the mixed list's priority
-/// order — the full list is not a stop (it is what Space already shows;
-/// Esc → Space returns to it). Fallback has no slot of its own — the
-/// plain kana ride at the tail of the rewriter view, which sits last so
-/// Ctrl+T reaches it in one press from the full list.
-const FILTER_CYCLE: [CandidateSource; 5] = [
-    CandidateSource::Learning,
-    CandidateSource::UserDictionary,
-    CandidateSource::Model,
-    CandidateSource::Dictionary,
-    CandidateSource::Rewriter,
-];
-
 /// How the unresolved romaji tail constrains the predictive lookup.
 enum TailConstraint {
     /// No tail: prediction is unconstrained
@@ -47,7 +33,7 @@ enum TailConstraint {
 /// Mozc-style width/script annotation for a pure-kana candidate, or `None`
 /// if the text mixes scripts or contains kanji/punctuation. Used to label
 /// `あ` / `ア` / `ｱ` candidates in the conversion list.
-fn width_annotation(text: &str) -> Option<&'static str> {
+pub(super) fn width_annotation(text: &str) -> Option<&'static str> {
     if karukan_engine::is_pure_hiragana(text) {
         Some("[全]ひらがな")
     } else if karukan_engine::is_pure_full_katakana(text) {
@@ -100,173 +86,18 @@ impl CandidateBuilder {
 }
 
 impl InputMethodEngine {
-    /// Run kana-kanji conversion for a reading via llama.cpp model.
-    ///
-    /// Determines the conversion strategy (main model, light model, or parallel beam),
-    /// dispatches to the appropriate model(s), measures latency, and records which model was used.
-    ///
-    /// Skips the model entirely when the reading has no hiragana/katakana — the
-    /// model is trained on kana → kanji and hallucinates garbage (e.g. `「` → `w`)
-    /// for symbol- or alphabet-only inputs. Rule-based variants from
-    /// `SymbolRewriter` cover those cases instead.
-    ///
-    /// `api_context` is the left context (lctx) fed to the model. Callers pass
-    /// `truncate_context_for_api()` for a whole-buffer conversion, or — for
-    /// chunked live conversion — the converted text of the preceding chunks.
-    ///
-    /// Results are cached by (katakana reading, lctx, strategy) — everything
-    /// that determines the model output, beam width included via the strategy.
-    /// A hit skips inference entirely, so live conversion re-running all
-    /// chunks each keystroke only pays for the chunks that actually changed.
-    pub(super) fn run_kana_kanji_conversion(
-        &mut self,
-        reading: &str,
-        api_context: &str,
-        num_candidates: usize,
-    ) -> Vec<String> {
-        if !karukan_engine::contains_kana(reading) {
-            return vec![];
-        }
-        let katakana = karukan_engine::hiragana_to_katakana(reading);
-
-        let strategy = self.determine_strategy(reading, num_candidates);
-
-        // Cache lookup comes before the converter check: a hit needs no model.
-        let key = ConversionCacheKey {
-            katakana: katakana.clone(),
-            lctx: api_context.to_string(),
-            strategy: strategy.clone(),
-        };
-        if let Some(candidates) = self.conversion_cache.get(&key) {
-            debug!(
-                "convert: cache hit reading=\"{}\" api_context=\"{}\" strategy={:?}",
-                reading, api_context, strategy
-            );
-            // conversion_ms stays 0 (no inference ran) and the adaptive flag
-            // is left untouched — a cache hit says nothing about model speed.
-            self.metrics.model_name = self.model_name_for(&strategy);
-            return candidates;
-        }
-
-        debug!(
-            "convert: reading=\"{}\" api_context=\"{}\" candidates={} strategy={:?}",
-            reading, api_context, num_candidates, strategy
-        );
-
-        let start = Instant::now();
-
-        let Some(converter) = self.converters.kanji.as_ref() else {
-            return vec![];
-        };
-        let candidates = match &strategy {
-            ConversionStrategy::ParallelBeam { beam_width } => {
-                let Some(light_converter) = self.converters.light_kanji.as_ref() else {
-                    return vec![];
-                };
-                let bw = *beam_width;
-                let (default_top1, light_candidates) = std::thread::scope(|s| {
-                    let h_default = s.spawn(|| {
-                        converter
-                            .convert(&katakana, api_context, 1)
-                            .unwrap_or_default()
-                    });
-                    let h_beam = s.spawn(|| {
-                        light_converter
-                            .convert(&katakana, api_context, bw)
-                            .unwrap_or_default()
-                    });
-                    (
-                        h_default.join().unwrap_or_default(),
-                        h_beam.join().unwrap_or_default(),
-                    )
-                });
-                Self::merge_candidates_dedup(default_top1, light_candidates, bw)
-            }
-            ConversionStrategy::LightModelOnly => {
-                let Some(light_converter) = self.converters.light_kanji.as_ref() else {
-                    return vec![];
-                };
-                light_converter
-                    .convert(&katakana, api_context, 1)
-                    .unwrap_or_default()
-            }
-            ConversionStrategy::LightModelBeam { beam_width } => {
-                let Some(light_converter) = self.converters.light_kanji.as_ref() else {
-                    return vec![];
-                };
-                light_converter
-                    .convert(&katakana, api_context, *beam_width)
-                    .unwrap_or_default()
-            }
-            ConversionStrategy::MainModelOnly => converter
-                .convert(&katakana, api_context, 1)
-                .unwrap_or_default(),
-            ConversionStrategy::MainModelBeam { beam_width } => converter
-                .convert(&katakana, api_context, *beam_width)
-                .unwrap_or_default(),
-        };
-
-        self.metrics.conversion_ms = start.elapsed().as_millis() as u64;
-        self.update_adaptive_model_flag(&strategy);
-        self.metrics.model_name = self.model_name_for(&strategy);
-
-        // Don't cache empty results: they usually mean a conversion error,
-        // and pinning one would keep replaying the failure.
-        if !candidates.is_empty() {
-            self.conversion_cache.insert(key, candidates.clone());
-        }
-
-        candidates
-    }
-
-    /// Display name of the model(s) a strategy dispatches to.
-    fn model_name_for(&self, strategy: &ConversionStrategy) -> String {
-        let main = self
-            .converters
-            .kanji
-            .as_ref()
-            .map(|c| c.model_display_name().to_string())
-            .unwrap_or_default();
-        let light = self
-            .converters
-            .light_kanji
-            .as_ref()
-            .map(|c| c.model_display_name().to_string());
-        match strategy {
-            ConversionStrategy::ParallelBeam { .. } => {
-                format!("{}+{}", main, light.unwrap_or_default())
-            }
-            ConversionStrategy::LightModelOnly | ConversionStrategy::LightModelBeam { .. } => {
-                light.unwrap_or(main)
-            }
-            ConversionStrategy::MainModelOnly | ConversionStrategy::MainModelBeam { .. } => main,
-        }
-    }
-
-    /// Start kanji conversion for the current input buffer.
-    ///
-    /// Called when DOWN/TAB/SPACE is pressed: settles any pending romaji,
-    /// resolves the reading, runs `build_conversion_candidates`, and
-    /// transitions into the Conversion state. The previous live-conversion
-    /// result is preserved as the first model candidate so the user sees
-    /// the same text they had been looking at during input.
-    ///
-    /// `skip_learning` is set by the Tab path to omit learning-cache
-    /// candidates (Space/Down keep the default learning-included behavior).
-    pub(super) fn start_conversion(&mut self, skip_learning: bool) -> EngineResult {
-        // Resolve the reading without touching the composition: pending
-        // romaji stays live so cancelling the conversion returns to an
-        // editable buffer (けいおうd → Tab → Esc → `a` → けいおうだ)
+    /// Start kanji conversion for the current buffer (Space/Down/Tab).
+    pub(super) fn start_conversion(&mut self, learning: LearningLookup) -> EngineResult {
+        // Resolve the reading without touching the composition, so Esc
+        // returns to an editable buffer with the romaji tail still live.
         let reading = self.input_buf.settled_reading(&self.converters.romaji);
         // The unresolved tail keeps narrowing the predictive dictionary
-        // lookup, so a suggestion visible while typing (わせd → 早稲田)
-        // stays selectable in the conversion list
+        // lookup (わせd → 早稲田 stays selectable).
         let base = self.input_buf.reading();
         let pending = self.input_buf.pending();
 
-        // Save auto-suggest/live conversion result before clearing state.
-        // This ensures the candidate that was displayed during input is preserved
-        // in the conversion candidate list even if the re-inference uses a different strategy.
+        // Snapshot the live-conversion text before clearing it, so the
+        // displayed candidate survives even if re-inference diverges.
         let prev_suggest_text = self.live_text_with_pending();
         self.live.shown = false;
 
@@ -280,11 +111,9 @@ impl InputMethodEngine {
             &base,
             &pending,
             self.config.num_candidates,
-            skip_learning,
+            learning,
         );
 
-        // If the previous auto-suggest result is not in the new candidates, insert it at the top
-        // so it doesn't disappear when the conversion strategy changes.
         let seen: HashSet<&str> = candidates.iter().map(|c| c.text.as_str()).collect();
         if !prev_suggest_text.is_empty()
             && prev_suggest_text != reading
@@ -307,10 +136,8 @@ impl InputMethodEngine {
         self.enter_conversion_state(&reading, candidate_list)
     }
 
-    /// Map builder output (`AnnotatedCandidate`) to the public
-    /// [`CandidateList`] shown in the conversion window. Candidates that don't
-    /// carry their own reading fall back to `reading`. The source rides along
-    /// as-is; its presentation (aux label, deletability) is derived on read.
+    /// Map builder output to the public [`CandidateList`] shown in the
+    /// conversion window.
     fn to_conversion_candidate_list(
         candidates: Vec<AnnotatedCandidate>,
         reading: &str,
@@ -318,12 +145,7 @@ impl InputMethodEngine {
         CandidateList::new(
             candidates
                 .into_iter()
-                .map(|ac| Candidate {
-                    reading: Some(ac.reading.unwrap_or_else(|| reading.to_string())),
-                    text: ac.text,
-                    source: Some(ac.source),
-                    description: ac.description,
-                })
+                .map(|ac| ac.into_candidate(reading))
                 .collect(),
         )
     }
@@ -332,7 +154,11 @@ impl InputMethodEngine {
     ///
     /// Sets up the preedit (highlighted selected text), updates the state, and
     /// returns an EngineResult with preedit, candidates, and aux text actions.
-    fn enter_conversion_state(&mut self, reading: &str, candidates: CandidateList) -> EngineResult {
+    pub(super) fn enter_conversion_state(
+        &mut self,
+        reading: &str,
+        candidates: CandidateList,
+    ) -> EngineResult {
         let selected_text = candidates.selected_text().unwrap_or(reading).to_string();
 
         let preedit = Preedit::with_text_highlighted(&selected_text);
@@ -345,30 +171,23 @@ impl InputMethodEngine {
             filter: None,
         };
 
+        // After the state assignment: the aux header reads the active filter.
+        let aux = self.format_aux_conversion_with_page(reading, Some(&candidates));
+
         EngineResult::consumed()
             .with_action(EngineAction::UpdatePreedit(preedit))
-            .with_action(EngineAction::ShowCandidates(candidates.clone()))
-            .with_action(EngineAction::UpdateAuxText(
-                self.format_aux_conversion_with_page(reading, Some(&candidates)),
-            ))
+            .with_action(EngineAction::ShowCandidates(candidates))
+            .with_action(EngineAction::UpdateAuxText(aux))
     }
 
-    /// Search user and system dictionaries for candidates matching a reading.
+    /// Dictionary candidates for a reading: user dict first, then system,
+    /// exact matches then predictive (prefix-extending) ones, deduped.
     ///
-    /// User dictionary results come first (higher priority), then system dictionary
-    /// results sorted by score. Duplicates are removed via HashSet.
-    ///
-    /// `pending` is the unresolved romaji tail, if any: it narrows the
-    /// predictive lookup to readings the tail can still become (わせ + `d`
-    /// keeps わせだ… and drops わせり…). `predictive_limit` caps the
-    /// prefix-extending results: small for the suggestion list, unlimited
-    /// for the paged conversion list.
-    ///
-    /// `only` restricts the search to one dictionary. The dedup then runs
-    /// within that dictionary alone, so a surface present in both stays
-    /// visible in the system-dictionary view instead of being hidden by
-    /// the user-dictionary copy.
-    fn search_dictionaries(
+    /// `pending` narrows the predictive lookup to readings the romaji tail
+    /// can still become (わせ + `d` keeps わせだ…, drops わせり…);
+    /// `predictive_limit` caps those results. `only` restricts search and
+    /// dedup to one dictionary, so shared surfaces stay visible per view.
+    pub(super) fn search_dictionaries(
         &self,
         reading: &str,
         pending: &str,
@@ -459,43 +278,27 @@ impl InputMethodEngine {
         }
     }
 
-    /// Build conversion candidates for a reading from multiple sources.
+    /// Build the mixed candidate list, deduped in priority order:
+    /// Learning → User Dictionary → Model → System Dictionary → Fallback.
     ///
-    /// Combines learning cache, dictionaries, and model inference results
-    /// with deduplication. Model candidates come from the tail-window
-    /// conversion ([`Self::windowed_model_candidates`]), so the beam stays
-    /// available regardless of reading length.
-    ///
-    /// Priority: Learning → User Dictionary → Model → System Dictionary → Fallback
-    ///
-    /// `base`/`pending` split the reading for the dictionary lookup: while
-    /// a romaji tail is unresolved the predictive search stays narrowed to
-    /// it (base わせ + `d` → わせだ…), with no tail they equal `reading`/"".
-    ///
-    /// `skip_learning` suppresses the learning-cache step (1). Used by the Tab
-    /// key path so users can escape a noisy learning history without losing
-    /// access to dictionary/model candidates.
+    /// `base`/`pending` split the reading for the dictionary lookup (the
+    /// unresolved romaji tail narrows prediction).
     pub(super) fn build_conversion_candidates(
         &mut self,
         reading: &str,
         base: &str,
         pending: &str,
         num_candidates: usize,
-        skip_learning: bool,
+        learning: LearningLookup,
     ) -> Vec<AnnotatedCandidate> {
-        // Try to initialize the kanji converter, but don't bail out if it
-        // fails — symbol-only inputs (e.g. `。。。`) don't need the model and
-        // we still want to produce dictionary, rewriter, and fallback candidates.
-        // run_kana_kanji_conversion handles the converter-missing case.
+        // Init failure is not fatal: symbol-only inputs don't need the
+        // model and still get dictionary/rewriter/fallback candidates.
         if self.converters.kanji.is_none()
             && let Err(e) = self.init_kanji_converter()
         {
             debug!("Failed to initialize kanji converter: {}", e);
         }
 
-        // Model candidates via the shared tail-window conversion: the beam
-        // always runs (over the bounded window) instead of degrading to a
-        // single greedy candidate for long readings.
         let candidates = self.windowed_model_candidates(reading, num_candidates);
 
         let hiragana = reading.to_string();
@@ -507,7 +310,7 @@ impl InputMethodEngine {
         // 1. Learning cache candidates (highest priority).
         //    Force-inserted so they win against duplicate text from later sources.
         //    Skipped when the caller asks for a learning-free conversion (Tab key).
-        if !skip_learning {
+        if learning == LearningLookup::Use {
             for c in self.lookup_learning_candidates(reading) {
                 // Exact matches have reading == input reading; use None to avoid redundancy
                 let cand_reading = c.reading.filter(|r| r != reading);
@@ -518,28 +321,27 @@ impl InputMethodEngine {
             }
         }
 
-        // 2. Dictionary candidates (user dict first, then system dict)
-        let dict_results = self.search_dictionaries(
-            base,
-            pending,
-            usize::MAX,
-            usize::MAX,
-            MIN_PREDICTIVE_PREFIX_CHARS,
-            None,
-        );
-        // Insert user dictionary entries at the top (after learning)
-        for ac in &dict_results {
-            if ac.source == CandidateSource::UserDictionary {
-                builder.push(ac.clone());
-            }
+        // 2. User dictionary candidates (system dictionary follows the model
+        //    in step 4, so the two are split here).
+        let (user_dict, system_dict): (Vec<_>, Vec<_>) = self
+            .search_dictionaries(
+                base,
+                pending,
+                usize::MAX,
+                usize::MAX,
+                MIN_PREDICTIVE_PREFIX_CHARS,
+                None,
+            )
+            .into_iter()
+            .partition(|ac| ac.source == CandidateSource::UserDictionary);
+        for ac in user_dict {
+            builder.push(ac);
         }
 
         // 3. Model inference results
         if candidates.is_empty() {
-            // In emoji mode, defer the literal-fallback decision until
-            // after rewriters have run — otherwise `:smile` would be
-            // pinned to the top of the candidate list as a Fallback
-            // and outrank the 😄 we surface in step 5/6.
+            // No literal fallback in emoji mode: `:smile` must not outrank
+            // the 😄 surfaced by the rewriter step below.
             if builder.is_empty() && self.mode.current() != InputMode::Emoji {
                 builder.push(AnnotatedCandidate::new(
                     hiragana.clone(),
@@ -552,80 +354,45 @@ impl InputMethodEngine {
             }
         }
 
-        // 4. System dictionary candidates (from search_dictionaries result)
-        for ac in dict_results {
-            if ac.source == CandidateSource::Dictionary {
-                builder.push(ac);
-            }
+        // 4. System dictionary candidates
+        for ac in system_dict {
+            builder.push(ac);
         }
 
-        // 5/6. Hiragana/katakana fallback + rewriter variants.
-        //
-        // In emoji mode we surface ONLY the rewriter (i.e. EmojiRewriter)
-        // candidates — Slack's emoji picker shows emojis and nothing
-        // else, and that's the mental model the user wants here.
-        // No literal `:smile` / `:xyz` fallback in the candidate list:
-        // if nothing matches, the picker is just empty. (Enter on a
-        // no-match query in Composing still commits the buffer
-        // literal via `commit_composing`; that's the escape hatch.)
-        // Non-emoji modes keep the original order so existing IME
-        // behavior is untouched.
-        let rewriter_variants = self
-            .converters
-            .rewriters
-            .rewrite_all(&[reading.to_string()]);
-        if self.mode.current() == InputMode::Emoji {
-            for (variant, description) in rewriter_variants {
-                builder.push(
-                    AnnotatedCandidate::new(variant, CandidateSource::Rewriter)
-                        .with_description(description),
-                );
-            }
-        } else {
+        // 5/6. Hiragana/katakana fallback + rewriter variants. Emoji mode
+        // shows rewriter (emoji) candidates only — no kana pair, like an
+        // emoji picker; Enter in Composing still commits the literal query.
+        if self.mode.current() != InputMode::Emoji {
             builder.push(AnnotatedCandidate::new(hiragana, CandidateSource::Fallback));
             builder.push(AnnotatedCandidate::new(katakana, CandidateSource::Fallback));
-            // Rewriters operate on the user's typed input (the reading
-            // itself). Running them on dictionary/model/fallback
-            // candidates produces unrelated noise (e.g. a dictionary
-            // entry of `,` for some reading would generate `、`/`，`
-            // variants the user never asked for; a learning entry `アト`
-            // pulled by prefix lookup on `あ` would emit `ｱﾄ`).
-            for (variant, description) in rewriter_variants {
-                builder.push(
-                    AnnotatedCandidate::new(variant, CandidateSource::Rewriter)
-                        .with_description(description),
-                );
-            }
+        }
+        // Rewriters run on the typed reading only; running them on other
+        // sources' candidates would emit variants nobody asked for.
+        for (variant, description) in self
+            .converters
+            .rewriters
+            .rewrite_all(&[reading.to_string()])
+        {
+            builder.push(
+                AnnotatedCandidate::new(variant, CandidateSource::Rewriter)
+                    .with_description(description),
+            );
         }
 
-        // 7. Enrich Fallback candidates whose text is a known symbol with
-        //    its description (mirrors the relevant slice of mozc's
-        //    `AddDescForCurrentCandidates`). Restricted to Fallback so the
-        //    AI/Dict/Learning paths don't pick up unwanted labels — e.g.
-        //    the model returning `金` for `きん` should NOT inherit mozc's
-        //    "部首" annotation. Typed-symbol input still gets annotated:
-        //    pressing `「` produces a Fallback candidate `「`, which here
-        //    picks up "始めかぎ括弧".
+        // 7. Back-fill descriptions. Symbol names are Fallback-only —
+        //    model/dict/learning candidates must not inherit labels like
+        //    「金 = 部首」 — while width annotations (`[全]カタカナ`) apply to
+        //    any pure-kana candidate that still has none.
         for c in &mut builder.candidates {
-            if c.source == CandidateSource::Fallback
-                && c.description.is_none()
-                && let Some(desc) = karukan_engine::symbol_description(&c.text)
-            {
-                c.description = Some(desc.to_string());
+            if c.description.is_some() {
+                continue;
             }
-        }
-
-        // 8. Attach mozc-style width annotations (`[全]ひらがな`,
-        //    `[全]カタカナ`, `[半]カタカナ`) to any pure-kana candidate that
-        //    still has no description. This catches `あ`/`ア` candidates that
-        //    arrived via the Model or Fallback paths and were deduped against
-        //    the rewriter's already-labelled variants.
-        for c in &mut builder.candidates {
-            if c.description.is_none()
-                && let Some(desc) = width_annotation(&c.text)
-            {
-                c.description = Some(desc.to_string());
-            }
+            let symbol = (c.source == CandidateSource::Fallback)
+                .then(|| karukan_engine::symbol_description(&c.text))
+                .flatten();
+            c.description = symbol
+                .or_else(|| width_annotation(&c.text))
+                .map(str::to_string);
         }
 
         builder.into_candidates()
@@ -640,11 +407,8 @@ impl InputMethodEngine {
 
     /// Full learning history for `reading` (exact + prefix, uncapped),
     /// narrowed by the unresolved romaji tail like the dictionary lookup —
-    /// an exact hit on the base would ignore the typed tail and commit
-    /// stale text. The narrowed learning view is a history browser, unlike
-    /// the mixed list, which keeps at most [`MAX_LEARNING_CANDIDATES`]
-    /// entries.
-    fn lookup_learning_history(&self, reading: &str, pending: &str) -> Vec<Candidate> {
+    /// an exact hit on the base must not swallow the typed tail.
+    pub(super) fn lookup_learning_history(&self, reading: &str, pending: &str) -> Vec<Candidate> {
         self.lookup_learning(reading, pending, usize::MAX)
     }
 
@@ -705,9 +469,7 @@ impl InputMethodEngine {
         candidates
     }
 
-    /// Look up dictionary candidates for a reading (1 page, for live conversion display)
-    ///
-    /// Searches user dictionary first, then system dictionary.
+    /// Dictionary candidates for the composing suggestion list (one page).
     pub(super) fn lookup_dict_candidates(&self, reading: &str) -> Vec<Candidate> {
         let pending = self.input_buf.pending();
         self.search_dictionaries(
@@ -719,13 +481,7 @@ impl InputMethodEngine {
             None,
         )
         .into_iter()
-        .map(|ac| Candidate {
-            text: ac.text,
-            // Predictive results carry their own (longer) reading
-            reading: ac.reading.or_else(|| Some(reading.to_string())),
-            source: Some(ac.source),
-            description: None,
-        })
+        .map(|ac| ac.into_candidate(reading))
         .collect()
     }
 
@@ -746,31 +502,13 @@ impl InputMethodEngine {
             .collect()
     }
 
-    /// Merge two candidate lists with deduplication
-    /// Primary candidates come first, then secondary candidates that aren't duplicates
-    pub(super) fn merge_candidates_dedup(
-        primary: Vec<String>,
-        secondary: Vec<String>,
-        max_candidates: usize,
-    ) -> Vec<String> {
-        let mut seen = HashSet::new();
-        primary
-            .into_iter()
-            .chain(secondary)
-            .filter(|c| seen.insert(c.clone()))
-            .take(max_candidates)
-            .collect()
-    }
-
-    /// Process key in conversion state
     pub(super) fn process_key_conversion(
         &mut self,
         key: &KeyEvent,
         shift_active: bool,
     ) -> EngineResult {
-        // Alt chords pass through before any binding matches: desktop
-        // shortcuts (Alt+Tab, Alt+arrow, …) must keep working even where
-        // the bare keysym is bound below (Alt+Return must not commit).
+        // Alt chords pass through before any binding matches: Alt+Tab must
+        // navigate and Alt+Return must not commit.
         if key.modifiers.alt_key {
             return EngineResult::not_consumed();
         }
@@ -786,10 +524,8 @@ impl InputMethodEngine {
             Keysym::PAGE_DOWN => self.next_candidate_page(),
             Keysym::PAGE_UP => self.prev_candidate_page(),
             // Ctrl+Backspace / Ctrl+Delete: delete the selected learning
-            // candidate from the history. Backspace doubles as Delete because
-            // the Mac "delete" key is Backspace. On a non-learning selection
-            // the chord is consumed but does nothing, so it can't leak into
-            // the application mid-conversion.
+            // candidate (the Mac "delete" key is Backspace). A non-learning
+            // selection consumes the chord as a no-op.
             Keysym::DELETE | Keysym::BACKSPACE if key.modifiers.control_key => {
                 if self.selected_is_deletable() {
                     self.delete_selected_candidate_from_history()
@@ -801,64 +537,47 @@ impl InputMethodEngine {
             // stays in the view — the mirror of typing-refine, so the list
             // re-expands as the query shrinks. Without a filter it returns
             // to the composition as before.
-            Keysym::BACKSPACE
-                if !key.modifiers.control_key
-                    && matches!(
-                        &self.state,
-                        InputState::Conversion {
-                            filter: Some(_),
-                            ..
-                        }
-                    ) =>
-            {
+            Keysym::BACKSPACE if self.state.filter().is_some() => {
                 self.refine_through_composing(key, shift_active)
             }
-            Keysym::BACKSPACE => self.backspace_conversion(),
+            // Backspace cancels back to the composition, like Escape.
+            Keysym::BACKSPACE => self.cancel_conversion(),
             _ => {
                 // Ctrl+N / Ctrl+P: emacs-style candidate navigation
                 if key.modifiers.control_key {
                     match key.keysym {
                         Keysym::KEY_N | Keysym::KEY_N_UPPER => return self.next_candidate(),
                         Keysym::KEY_P | Keysym::KEY_P_UPPER => return self.prev_candidate(),
-                        // Ctrl+R / Ctrl+T: cycle the source filter
-                        // forward / backward. Dedicated keys (both keysym
-                        // cases accepted) — direction never depends on the
-                        // Shift bit, which some environments fold into an
-                        // uppercase keysym. Safe even in browsers: unbound
-                        // keys below are consumed too, so the chords never
-                        // reach the app mid-conversion.
+                        // Ctrl+R / Ctrl+T: cycle the source filter. Both
+                        // keysym cases — some environments fold Shift into
+                        // an uppercase keysym; direction must not change.
                         Keysym::KEY_R | Keysym::KEY_R_UPPER => {
-                            return self.cycle_candidate_filter(true);
+                            return self.cycle_candidate_filter(FilterDirection::Forward);
                         }
                         Keysym::KEY_T | Keysym::KEY_T_UPPER => {
-                            return self.cycle_candidate_filter(false);
+                            return self.cycle_candidate_filter(FilterDirection::Backward);
                         }
                         _ => {}
                     }
+
+                    // Ctrl+1..9: select and commit that candidate. Bare
+                    // digits refine below like any printable character, so
+                    // typing numbers never conflicts with selection.
+                    if let Some(digit) = key.keysym.digit_value() {
+                        return self.select_candidate_by_digit(digit);
+                    }
                 }
 
-                // Check for digit selection (1-9)
-                if let Some(digit) = key.keysym.digit_value() {
-                    return self.select_candidate_by_digit(digit);
-                }
-
-                // Any printable character refines the conversion instead
-                // of committing it (a deliberate deviation from mozc): drop
-                // back to the untouched composition and feed the keystroke,
-                // so the reading grows and the suggestion rewrites in place
-                // — incremental-search feel. Inside a narrowed view the
-                // filter survives: the conversion re-enters with the same
-                // source, so its list narrows as the reading grows. Digits
-                // (candidate selection) were already handled above.
+                // A printable character refines instead of committing:
+                // the reading grows and the suggestion rewrites in place,
+                // keeping any active source filter.
                 if key.to_char().is_some() && !key.modifiers.control_key {
                     return self.refine_through_composing(key, shift_active);
                 }
 
-                // Everything else — stray chords, function keys, Home/End —
-                // is consumed as a no-op, like mozc: leaking it would let
-                // the application act on it (e.g. a browser reloading the
-                // page) while the conversion is on screen. (Alt chords were
-                // already passed through above.)
+                // Everything else is consumed as a no-op — leaked chords
+                // would let the app act on them mid-conversion (e.g. a
+                // browser reloading on Ctrl+R).
                 EngineResult::consumed()
             }
         }
@@ -866,16 +585,10 @@ impl InputMethodEngine {
 
     /// Feed a refining keystroke (printable char, Backspace) through the
     /// composing path, then re-enter the conversion with the previous
-    /// source filter if one was active. The composing render is returned
-    /// as-is when no filter was set — that IS the incremental display;
-    /// with a filter it is discarded in favor of the rebuilt view, so the
-    /// auto-suggest model call is suppressed for the duration (the
-    /// filtered view runs its own conversion).
+    /// source filter if one was active. With a filter the composing render
+    /// is discarded, so its auto-suggest inference is suppressed.
     fn refine_through_composing(&mut self, key: &KeyEvent, shift_active: bool) -> EngineResult {
-        let filter = match &self.state {
-            InputState::Conversion { filter, .. } => *filter,
-            _ => None,
-        };
+        let filter = self.state.filter();
         self.set_composing_state();
         self.suppress_suggest = filter.is_some();
         let result = self.process_key_composing(key, shift_active);
@@ -907,28 +620,25 @@ impl InputMethodEngine {
         }
     }
 
-    /// Record a conversion selection in the learning cache.
+    /// Record a selection in the learning cache. No-op in emoji mode — the
+    /// buffer is a `:query`, not a kana reading, and would corrupt the
+    /// kana-keyed cache.
     pub(super) fn record_learning(&mut self, reading: &str, surface: &str) {
+        if self.mode.current() == InputMode::Emoji {
+            return;
+        }
         if let Some(cache) = &mut self.learning {
             cache.record(reading, surface);
         }
     }
 
-    /// Record the committed conversion in the learning cache and reset to Empty state.
-    ///
-    /// Skips learning when the buffer is a `:shortcode` query — the
-    /// reading would be e.g. `:smile`, which isn't a hiragana key
-    /// and would corrupt the kana-keyed learning cache.
-    fn finish_conversion(&mut self, text: &str, reading: &Option<String>) {
-        if self.mode.current() != InputMode::Emoji
-            && let Some(reading) = reading
-        {
+    /// Record the committed conversion in the learning cache and end the
+    /// composition.
+    pub(super) fn finish_conversion(&mut self, text: &str, reading: &Option<String>) {
+        if let Some(reading) = reading {
             self.record_learning(reading, text);
         }
-
-        self.state = InputState::Empty;
-        self.input_buf.clear();
-        self.mode.exit_temporary();
+        self.end_composition();
     }
 
     /// Commit the current conversion
@@ -959,15 +669,10 @@ impl InputMethodEngine {
             .is_some_and(Candidate::is_deletable)
     }
 
-    /// Delete the selected learning candidate from the history
-    /// (Ctrl+Backspace / Ctrl+Delete); the caller guards deletability
-    /// ([`Self::selected_is_deletable`]).
-    ///
-    /// Removes the entry and its prefix twins
-    /// ([`LearningCache::remove_suggestion`]), then rebuilds the conversion
-    /// rather than dropping the row in place: dedup hid any
-    /// model/dictionary/fallback copy of the same surface behind the learning
-    /// entry, and only a rebuild brings it back.
+    /// Delete the selected learning candidate and its prefix twins from the
+    /// history, then rebuild the conversion in place — dedup hid any other
+    /// source's copy of the surface, and only a rebuild brings it back.
+    /// The caller guards deletability ([`Self::selected_is_deletable`]).
     fn delete_selected_candidate_from_history(&mut self) -> EngineResult {
         let Some(surface) = self
             .state
@@ -977,14 +682,11 @@ impl InputMethodEngine {
         else {
             return EngineResult::consumed();
         };
-        // The typed reading is the key the candidate was looked up under. A
-        // prefix-matched candidate carries a longer reading of its own, but
-        // every entry that surfaces it has the typed reading as a prefix, so
-        // removing by the typed reading clears the shown row and its twins.
-        let InputState::Conversion { reading, .. } = &self.state else {
+        // Remove by the typed reading: every entry surfacing this row has
+        // it as a prefix, so the row and its twins clear together.
+        let Some(reading) = self.state.reading().map(str::to_string) else {
             return EngineResult::consumed();
         };
-        let reading = reading.clone();
         let removed = self
             .learning
             .as_mut()
@@ -994,13 +696,9 @@ impl InputMethodEngine {
         }
         debug!("deleted learning entry: {} -> {}", reading, surface);
 
-        // Deleting from a narrowed window (Ctrl+R) keeps the filter, so
-        // consecutive deletes stay in the learning view — even when the
-        // source has no candidates left (the view then shows 「候補なし」).
-        let prev_filter = match &self.state {
-            InputState::Conversion { filter, .. } => *filter,
-            _ => None,
-        };
+        // Keep the filter and cursor so consecutive deletes stay in the
+        // narrowed view and chew through the list top-down.
+        let prev_filter = self.state.filter();
         let prev_cursor = self.state.candidates().map(|c| c.cursor()).unwrap_or(0);
 
         let candidates = self.build_conversion_candidates(
@@ -1008,7 +706,7 @@ impl InputMethodEngine {
             &reading,
             "",
             self.config.num_candidates,
-            false,
+            LearningLookup::Use,
         );
         if candidates.is_empty() {
             return self.cancel_conversion();
@@ -1017,13 +715,8 @@ impl InputMethodEngine {
         let mut result = self.enter_conversion_state(&reading, candidate_list);
 
         if let Some(source) = prev_filter {
-            // The filter survives the rebuild even when its source has no
-            // candidates left — the view then shows 「候補なし」.
             result = self.apply_candidate_filter(source);
         }
-        // Keep the cursor where the deleted row was (clamped to the new
-        // length), so consecutive deletes chew through the list instead of
-        // jumping back to the top each time.
         if self.state.candidates().is_some_and(|c| !c.is_empty()) {
             return self.navigate_candidate(|c| {
                 c.set_cursor(prev_cursor);
@@ -1032,267 +725,6 @@ impl InputMethodEngine {
         }
         result
     }
-
-    /// Ctrl+R / Ctrl+T: narrow the conversion window to the next /
-    /// previous source view in [`FILTER_CYCLE`]. From the full list the
-    /// rotation is entered at its head (forward) or tail (backward); it
-    /// never rotates back to the full list. Exactly one step per press —
-    /// an empty source is shown as an empty window with 「候補なし」, never
-    /// skipped, so the position stays predictable. The aux header shows
-    /// the active filter ([変換:📝]).
-    fn cycle_candidate_filter(&mut self, forward: bool) -> EngineResult {
-        let current = match &self.state {
-            InputState::Conversion { filter, .. } => *filter,
-            _ => return EngineResult::not_consumed(),
-        };
-        let len = FILTER_CYCLE.len();
-        let pos = match current {
-            None if forward => 0,
-            None => len - 1,
-            Some(source) => {
-                let pos = FILTER_CYCLE.iter().position(|f| *f == source).unwrap_or(0);
-                (if forward { pos + 1 } else { pos + len - 1 }) % len
-            }
-        };
-        self.apply_candidate_filter(FILTER_CYCLE[pos])
-    }
-
-    /// Ctrl+R while composing: enter the Conversion state and immediately
-    /// narrow it one step, so the filtered view opens without Space.
-    pub(super) fn start_filtered_conversion(&mut self, forward: bool) -> EngineResult {
-        if !self.enter_conversion_for_filter() {
-            return EngineResult::consumed();
-        }
-        self.cycle_candidate_filter(forward)
-    }
-
-    /// Enter the Conversion state already narrowed to `source` — used when
-    /// typing refines a narrowed view, so the view survives the keystroke.
-    fn start_conversion_with_filter(&mut self, source: CandidateSource) -> EngineResult {
-        if !self.enter_conversion_for_filter() {
-            return EngineResult::consumed();
-        }
-        self.apply_candidate_filter(source)
-    }
-
-    /// Enter the Conversion state as a shell for a filtered view. Unlike
-    /// Space, no mixed candidate list is built — the view re-queries its
-    /// source anyway — so no model inference runs here. Returns false when
-    /// there is nothing to convert.
-    fn enter_conversion_for_filter(&mut self) -> bool {
-        let reading = self.input_buf.settled_reading(&self.converters.romaji);
-        if reading.is_empty() {
-            return false;
-        }
-        // Like start_conversion: the conversion window replaces the live
-        // display. Left shown, the stale chunks would survive the commit
-        // and render as the next composition's preedit.
-        self.live.shown = false;
-        self.enter_conversion_state(&reading, CandidateList::new(Vec::new()));
-        matches!(self.state, InputState::Conversion { .. })
-    }
-
-    /// Set `filter` and rebuild the window from it. With no candidates the
-    /// preedit falls back to the reading and the aux says 「候補なし」.
-    fn apply_candidate_filter(&mut self, next: CandidateSource) -> EngineResult {
-        let reading = match &self.state {
-            InputState::Conversion { reading, .. } => reading.clone(),
-            _ => return EngineResult::not_consumed(),
-        };
-        let list = CandidateList::new(self.source_view(next, &reading));
-        let selected = list.selected_text().unwrap_or(&reading).to_string();
-        let preedit = Preedit::with_text_highlighted(&selected);
-        if let InputState::Conversion {
-            filter,
-            candidates,
-            preedit: state_preedit,
-            ..
-        } = &mut self.state
-        {
-            *filter = Some(next);
-            *candidates = list.clone();
-            *state_preedit = preedit.clone();
-        }
-        debug!("candidate filter → {:?}", next);
-        // Like candidate navigation, the aux shows the selected candidate's
-        // own reading (predictive entries carry a longer one), falling back
-        // to the base reading for an empty view.
-        let aux_reading = list
-            .selected()
-            .and_then(|c| c.reading.clone())
-            .unwrap_or_else(|| reading.clone());
-        EngineResult::consumed()
-            .with_action(EngineAction::UpdatePreedit(preedit))
-            .with_action(EngineAction::ShowCandidates(list.clone()))
-            .with_action(EngineAction::UpdateAuxText(
-                self.format_aux_conversion_with_page(&aux_reading, Some(&list)),
-            ))
-    }
-
-    /// Candidates shown when the window is narrowed to `source`. Every view
-    /// queries its own source directly instead of filtering the mixed list:
-    /// the list dedups shared texts into the highest-priority source, which
-    /// would hide them from every lower source's view (a learned word
-    /// disappearing from the user-dictionary view, the model's copy of a
-    /// dictionary word missing from the AI view, and so on).
-    fn source_view(&mut self, source: CandidateSource, reading: &str) -> Vec<Candidate> {
-        // Learning and dictionary queries run against the live buffer — the
-        // base reading plus the unresolved romaji tail — so mid-word typing
-        // narrows predictively (わせ + `d` keeps わせだ…) instead of
-        // querying a reading with a stray consonant in it. Model and
-        // rewriter cannot consume a tail: they use the state's settled
-        // `reading` — the exact text Enter commits — so no selectable
-        // candidate can ignore newly typed input.
-        //
-        // The base/pending split is only meaningful while the active romaji
-        // run sits at the end of the composition: with a mid-buffer caret,
-        // `base + tail` predicts in the wrong order (あk|い settles to
-        // あkい, never あいか…), so those queries fall back to the settled
-        // reading with no tail prediction.
-        let at_end = self.input_buf.cursor() == self.input_buf.char_count();
-        let (base, pending) = if at_end {
-            (self.input_buf.reading(), self.input_buf.pending())
-        } else {
-            (reading.to_string(), String::new())
-        };
-        match source {
-            CandidateSource::Learning => self.lookup_learning_history(&base, &pending),
-            // A dedicated, paged dictionary browser wants everything:
-            // predictive matches kick in from the first char here, unlike
-            // the mixed list's MIN_PREDICTIVE_PREFIX_CHARS flood guard.
-            // Restricting the search to the view's own dictionary keeps a
-            // surface shared with the other dictionary visible here.
-            source @ (CandidateSource::UserDictionary | CandidateSource::Dictionary) => self
-                .search_dictionaries(&base, &pending, usize::MAX, usize::MAX, 1, Some(source))
-                .into_iter()
-                .map(|ac| Candidate {
-                    text: ac.text,
-                    reading: ac.reading.or_else(|| Some(base.clone())),
-                    source: Some(source),
-                    description: ac.description,
-                })
-                .collect(),
-            CandidateSource::Model => self.model_source_view(reading),
-            // Rewriter variants regenerate from the reading; the plain kana
-            // pair rides at the tail (lowest priority).
-            CandidateSource::Rewriter => {
-                let mut view = self.lookup_rewriter_variants(reading);
-                // Emoji mode shows emojis and nothing else — no literal
-                // `:query` pair at the tail.
-                if self.mode.current() == InputMode::Emoji {
-                    return view;
-                }
-                let mut kana = vec![reading.to_string()];
-                let katakana = karukan_engine::hiragana_to_katakana(reading);
-                if katakana != kana[0] {
-                    kana.push(katakana);
-                }
-                for text in kana {
-                    if view.iter().any(|c| c.text == text) {
-                        continue;
-                    }
-                    view.push(Candidate {
-                        description: width_annotation(&text).map(str::to_string),
-                        text,
-                        reading: Some(reading.to_string()),
-                        source: Some(CandidateSource::Fallback),
-                    });
-                }
-                view
-            }
-            // Fallback has no slot in the cycle; nothing to show.
-            CandidateSource::Fallback => Vec::new(),
-        }
-    }
-
-    /// Model candidates for the narrowed AI view: the shared tail-window
-    /// conversion ([`Self::windowed_model_candidates`]), so the view
-    /// normally shows the mixed list's model rows straight from the
-    /// conversion cache right after Space. Two known divergences: the
-    /// mixed list may carry a preserved live-conversion row this view
-    /// regenerates without, and a conversion slow enough to flip the
-    /// adaptive flag makes this rebuild re-run on the light model under
-    /// its own cache key.
-    fn model_source_view(&mut self, reading: &str) -> Vec<Candidate> {
-        self.windowed_model_candidates(reading, self.config.num_candidates)
-            .into_iter()
-            .map(|text| Candidate {
-                text,
-                reading: Some(reading.to_string()),
-                source: Some(CandidateSource::Model),
-                description: None,
-            })
-            .collect()
-    }
-
-    /// Tail-window model conversion, shared by Space's mixed list and the
-    /// AI view.
-    ///
-    /// The `num_candidates` beam runs over a tail window: the final
-    /// Japanese run, taken from the end and capped at the beam gate
-    /// (`beam_window_len` chars — the same char unit the strategy
-    /// compares against, so the beam request always passes the gate
-    /// instead of degrading to the long-input single-candidate path;
-    /// `composing_chunk_len` still applies when configured smaller). An
-    /// explicit chunk boundary — punctuation, digits, any non-Japanese
-    /// run — is never crossed, and non-Japanese runs keep their verbatim
-    /// passthrough (never fed to the model). Everything before the window
-    /// converts top-1 on the live-conversion chunk grid, served from the
-    /// conversion cache while the user types. So no matter how long the
-    /// reading grows, a conversion pays one bounded beam call (plus at
-    /// most one bounded top-1 call for the window's overflow) and keeps
-    /// offering beam-width alternatives.
-    ///
-    /// A boundary-free reading within the window cap — the common case —
-    /// makes the window the whole reading: a single whole-reading beam.
-    /// Candidates equal to the raw reading are dropped (that is what an
-    /// unavailable model degenerates to), so an empty result means "no
-    /// model suggestion" to the callers.
-    fn windowed_model_candidates(&mut self, reading: &str, num_candidates: usize) -> Vec<String> {
-        if !karukan_engine::contains_kana(reading) {
-            return Vec::new();
-        }
-        let base_ctx = self.truncate_context_for_api();
-        let chars: Vec<char> = reading.chars().collect();
-        let run_start = chars
-            .iter()
-            .rposition(|c| !is_japanese(*c))
-            .map_or(0, |i| i + 1);
-        let cap = self.config.beam_window_len.min(self.chunk_len());
-        let window_start = run_start.max(chars.len().saturating_sub(cap));
-
-        let mut prefix = String::new();
-        for chunk in group_chunks(&chars[..window_start], self.chunk_len()) {
-            let chunk_reading: String = chunk.iter().collect();
-            if chunk_reading.chars().next().is_some_and(is_japanese) {
-                let lctx = self.lctx_for(&base_ctx, &prefix);
-                let converted = self.run_kana_kanji_conversion(&chunk_reading, &lctx, 1);
-                prefix.push_str(converted.first().unwrap_or(&chunk_reading));
-            } else {
-                prefix.push_str(&chunk_reading);
-            }
-        }
-
-        // An empty window (the reading ends in a non-Japanese run) leaves
-        // just the converted prefix as the single candidate.
-        let window: String = chars[window_start..].iter().collect();
-        let tails = if window.is_empty() {
-            vec![String::new()]
-        } else {
-            let lctx = self.lctx_for(&base_ctx, &prefix);
-            let beam = self.run_kana_kanji_conversion(&window, &lctx, num_candidates);
-            if beam.is_empty() { vec![window] } else { beam }
-        };
-
-        let mut seen = HashSet::new();
-        tails
-            .into_iter()
-            .map(|tail| format!("{prefix}{tail}"))
-            .filter(|text| text != reading && seen.insert(text.clone()))
-            .collect()
-    }
-
-    /// Cancel conversion and return to hiragana
     pub(super) fn cancel_conversion(&mut self) -> EngineResult {
         if !matches!(self.state, InputState::Conversion { .. }) {
             return EngineResult::not_consumed();
@@ -1331,7 +763,7 @@ impl InputMethodEngine {
             let text = candidates.selected_text().unwrap_or("").to_string();
             (text, candidates.clone())
         };
-        self.update_conversion_preedit(&selected_text, &candidates)
+        self.update_conversion_preedit(&selected_text, candidates)
     }
 
     /// Select next candidate
@@ -1365,12 +797,11 @@ impl InputMethodEngine {
         result
     }
 
-    /// Select candidate by digit (1-9)
+    /// Select and commit the candidate at `digit` (1-9) on the current page.
     fn select_candidate_by_digit(&mut self, digit: usize) -> EngineResult {
         let (selected_text, reading) = {
-            let candidates = match self.state.candidates_mut() {
-                Some(c) => c,
-                None => return EngineResult::not_consumed(),
+            let Some(candidates) = self.state.candidates_mut() else {
+                return EngineResult::not_consumed();
             };
 
             if candidates.select_on_page(digit).is_none() {
@@ -1382,14 +813,7 @@ impl InputMethodEngine {
             (text, reading)
         };
 
-        // Record learning before committing
-        if let Some(reading) = &reading {
-            self.record_learning(reading, &selected_text);
-        }
-
-        // Commit immediately after digit selection
-
-        self.state = InputState::Empty;
+        self.finish_conversion(&selected_text, &reading);
 
         EngineResult::consumed()
             .with_action(EngineAction::HideCandidates)
@@ -1401,7 +825,7 @@ impl InputMethodEngine {
     fn update_conversion_preedit(
         &mut self,
         selected_text: &str,
-        candidates: &CandidateList,
+        candidates: CandidateList,
     ) -> EngineResult {
         let preedit = Preedit::with_text_highlighted(selected_text);
 
@@ -1411,20 +835,13 @@ impl InputMethodEngine {
 
         let reading = candidates
             .selected()
-            .and_then(|c| c.reading.as_deref())
-            .unwrap_or("");
+            .and_then(|c| c.reading.clone())
+            .unwrap_or_default();
+        let aux = self.format_aux_conversion_with_page(&reading, Some(&candidates));
 
         EngineResult::consumed()
             .with_action(EngineAction::UpdatePreedit(preedit))
-            .with_action(EngineAction::ShowCandidates(candidates.clone()))
-            .with_action(EngineAction::UpdateAuxText(
-                self.format_aux_conversion_with_page(reading, Some(candidates)),
-            ))
-    }
-
-    /// Handle backspace in conversion mode
-    fn backspace_conversion(&mut self) -> EngineResult {
-        // Return to hiragana mode with the reading
-        self.cancel_conversion()
+            .with_action(EngineAction::ShowCandidates(candidates))
+            .with_action(EngineAction::UpdateAuxText(aux))
     }
 }
