@@ -172,6 +172,11 @@ pub struct InputMethodEngine {
     dicts: Dictionaries,
     /// Learning cache (user conversion history)
     learning: Option<LearningCache>,
+    /// Receiver for the background model-loading thread: model resolution
+    /// can block on the network, so it never runs on the key-event thread.
+    /// Drained by `poll_loaded_models` at the top of `process_key`; until
+    /// then (or if loading failed) the engine runs dictionary/kana-only.
+    model_loading: Option<std::sync::mpsc::Receiver<init::LoadedConverters>>,
 }
 
 impl InputMethodEngine {
@@ -198,6 +203,7 @@ impl InputMethodEngine {
             shown_suggestions: CandidateList::default(),
             dicts: Dictionaries::default(),
             learning: None,
+            model_loading: None,
         }
     }
 
@@ -243,6 +249,7 @@ impl InputMethodEngine {
         match (main, sub) {
             (Some(m), Some(s)) => format!("{}+{}", m, s),
             (Some(m), None) => m.to_string(),
+            _ if self.model_loading.is_some() => "loading".to_string(),
             _ => "unknown".to_string(),
         }
     }
@@ -544,6 +551,9 @@ impl InputMethodEngine {
 
     /// Process a key event
     pub fn process_key(&mut self, key: &KeyEvent) -> EngineResult {
+        // Install converters the background loader has finished; never blocks.
+        self.poll_loaded_models();
+
         // Log modifier key events for debugging key mapping issues
         if key.keysym.is_modifier() {
             debug!(
