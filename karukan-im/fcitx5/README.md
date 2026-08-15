@@ -36,6 +36,13 @@ sudo cmake --install build
 fcitx5 -r
 ```
 
+> [!NOTE]
+> 既定でビルドマシンのCPU固有命令を使ってビルドします(`-C target-cpu=native`、変換が約5%速くなります)。
+> ビルドしたマシンでしか動かないバイナリになるため、配布用にビルドする場合は
+> `cmake -B build -DKARUKAN_NATIVE=OFF ...` を指定してください。自前の `RUSTFLAGS` を
+> 設定している場合はそちらが優先されます。手元で `cargo build --release` を直接叩くと
+> フラグの差でリビルドが走る点だけ注意してください。
+
 ### Build & Install (ユーザーローカル)
 
 `~/.local` にインストールします。sudo 不要ですが、`FCITX_ADDON_DIRS` の手動設定が必要です。
