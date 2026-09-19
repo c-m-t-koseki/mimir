@@ -33,7 +33,7 @@ Karukan のキーバインド一覧です。共通キーバインドは Linux (f
 | キー | 動作 |
 |------|------|
 | Space / Tab / ↓ / Ctrl+N | 次の候補 |
-| ↑ / Shift+Tab / Ctrl+P | 前の候補 |
+| ↑ / Shift+Space / Shift+Tab / Ctrl+P | 前の候補 |
 | PageDown / PageUp | 候補ページの移動 |
 | Ctrl+1〜9 | 表示中の候補を番号で選択・確定 |
 | Enter | 選択中の候補を確定 |

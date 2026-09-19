@@ -637,12 +637,10 @@ impl InputMethodEngine {
         // conversion_ms reports this key only: 0 unless a conversion runs below
         self.metrics.conversion_ms = 0;
 
-        let shift_active = key.modifiers.shift_key;
-
         let result = match &self.state {
-            InputState::Empty => self.process_key_empty(key, shift_active),
-            InputState::Composing { .. } => self.process_key_composing(key, shift_active),
-            InputState::Conversion { .. } => self.process_key_conversion(key, shift_active),
+            InputState::Empty => self.process_key_empty(key),
+            InputState::Composing { .. } => self.process_key_composing(key),
+            InputState::Conversion { .. } => self.process_key_conversion(key),
         };
 
         self.metrics.process_key_ms = start.elapsed().as_millis() as u64;
