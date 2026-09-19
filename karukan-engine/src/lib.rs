@@ -11,7 +11,7 @@ pub use kana::{
     contains_kana, hiragana_to_katakana, is_pure_full_katakana, is_pure_hiragana,
     katakana_to_hiragana, normalize_nfkc,
 };
-pub use kanji::{Backend, KanaKanjiConverter};
+pub use kanji::{KanaKanjiConverter, ModelSource};
 pub use learning::{LearningCache, LearningConfig};
 pub use rewriter::{
     AlphabetRewriter, DateConfig, DatePhrase, DateRewriter, EmojiRewriter,
