@@ -183,7 +183,8 @@ pub struct SetConfigParams {
     pub value: serde_json::Value,
 }
 
-/// `learning_remove`: forget one learned conversion.
+/// `learning_remove` / `history_remove`: forget one learned or committed
+/// conversion.
 #[derive(Debug, Deserialize)]
 pub struct LearningEntryParams {
     pub reading: String,

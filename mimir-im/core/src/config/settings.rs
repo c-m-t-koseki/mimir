@@ -390,6 +390,11 @@ impl Settings {
         Self::data_dir().map(|dir| dir.join("learning.tsv"))
     }
 
+    /// Everything committed from parts, for completion only.
+    pub fn history_file() -> Option<PathBuf> {
+        Self::data_dir().map(|dir| dir.join("history.tsv"))
+    }
+
     /// Load settings from the default configuration file.
     /// Falls back to embedded default.toml if the config file does not exist.
     pub fn load() -> Result<Self> {
