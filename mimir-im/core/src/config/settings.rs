@@ -140,10 +140,27 @@ pub enum PartHint {
     /// completes to them).
     #[default]
     Completion,
-    /// The kana under the live conversion.
-    Reading,
-    /// Nothing.
+    /// Nothing. `"reading"`, the reading panel `reading_display` replaced,
+    /// still loads as this: a value gone from an old config must not make
+    /// the whole file fail to load.
+    #[serde(alias = "reading")]
     None,
+}
+
+/// How the reading under the live conversion shows (macOS part input).
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReadingDisplay {
+    /// Not at all.
+    None,
+    /// Above the last kanji run of the preedit, like furigana.
+    #[default]
+    Ruby,
+    /// The last `tail_chars` typed stay kana in the preedit, until typing
+    /// pauses.
+    Tail,
+    /// After the preedit, for its last kanji run: 天気〈てんき〉.
+    Inline,
 }
 
 /// Aux-line settings
@@ -160,6 +177,10 @@ pub struct DisplaySettings {
     pub part_hint: PartHint,
     /// How the candidate window lays candidates out (macOS)
     pub candidate_layout: CandidateLayout,
+    /// How the reading under the live conversion shows (macOS)
+    pub reading_display: ReadingDisplay,
+    /// `reading_display = "tail"`: how many typed chars stay kana
+    pub tail_chars: usize,
 }
 
 /// Candidates one per row, or each where its select key is on the
@@ -736,6 +757,12 @@ my-model = "/home/user/models/my.gguf"
     }
 
     #[test]
+    fn test_part_hint_reading_still_loads() {
+        let settings = parse_with_defaults("[display]\npart_hint = \"reading\"\n").unwrap();
+        assert_eq!(settings.display.part_hint, PartHint::None);
+    }
+
+    #[test]
     fn test_date_off_keeps_the_phrase_list() {
         let settings = parse_with_defaults("[date]\nenabled = false\n").unwrap();
         assert!(!settings.date.enabled);
@@ -866,10 +893,9 @@ strategy = "main"
         let path = dir.path().join("config.toml");
         std::fs::write(&path, "[display]\ncandidate_window = \"conversion\"\n").unwrap();
 
-        Settings::set_value_in(&path, "display", "part_hint", toml::Value::from("reading"))
-            .unwrap();
+        Settings::set_value_in(&path, "display", "part_hint", toml::Value::from("none")).unwrap();
         let settings = Settings::load_from(&path).unwrap();
-        assert_eq!(settings.display.part_hint, PartHint::Reading);
+        assert_eq!(settings.display.part_hint, PartHint::None);
         assert_eq!(
             settings.display.candidate_window,
             CandidateWindow::Conversion
@@ -880,7 +906,7 @@ strategy = "main"
                 .is_err()
         );
         let settings = Settings::load_from(&path).unwrap();
-        assert_eq!(settings.display.part_hint, PartHint::Reading);
+        assert_eq!(settings.display.part_hint, PartHint::None);
     }
 
     #[test]

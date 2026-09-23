@@ -18,7 +18,7 @@ use crate::core::state::InputState;
 
 use protocol::{
     Action, CandidateItem, InitResult, KeyResult, LearningEntryParams, PROTOCOL_VERSION,
-    PreeditAttr, ProcessKeyParams, Request, Response, RpcError, SelectCandidateParams,
+    PreeditAttr, ProcessKeyParams, Request, Response, RpcError, Ruby, SelectCandidateParams,
     SetConfigParams, StatusResult, SurroundingTextParams,
 };
 
@@ -54,7 +54,11 @@ impl ImServer {
         let config = EngineConfig::from_settings(&settings);
         let mut engine = InputMethodEngine::with_config(config);
         let mut part = PartLayer::with_hint(settings.display.part_hint)
-            .with_skk_style(settings.conversion.skk_style);
+            .with_skk_style(settings.conversion.skk_style)
+            .with_reading_display(
+                settings.display.reading_display,
+                settings.display.tail_chars,
+            );
         part.attach(&mut engine);
         Self {
             engine,
@@ -120,6 +124,10 @@ impl ImServer {
                 let result = self.part.flush(&mut self.engine);
                 self.key_result(result)
             }
+            "refresh" => {
+                let result = self.part.refresh(&self.engine);
+                self.key_result(result)
+            }
             "reset" => {
                 self.engine.reset();
                 self.part.attach(&mut self.engine);
@@ -136,6 +144,8 @@ impl ImServer {
                 Ok(json!({
                     "part_hint": settings.display.part_hint,
                     "candidate_layout": settings.display.candidate_layout,
+                    "reading_display": settings.display.reading_display,
+                    "tail_chars": settings.display.tail_chars,
                     "predictive": settings.conversion.predictive,
                     "skk_style": settings.conversion.skk_style,
                     "model": settings.conversion.model,
@@ -247,6 +257,11 @@ impl ImServer {
             hint: self.part.hint(&self.engine),
             select_keys: self.part.picks_by_letter(),
             candidate_layout: self.candidate_layout,
+            ruby: self
+                .part
+                .ruby(&self.engine)
+                .map(|(start, end, text)| Ruby { start, end, text }),
+            refresh_ms: self.part.refresh_after_ms(&self.engine),
         })
         .map_err(internal_error)
     }

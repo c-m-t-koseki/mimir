@@ -361,29 +361,71 @@ class ModeBadgeController {
     }
 }
 
-/// The hint under an open kanji part (`[display] part_hint`): the words Tab
-/// would complete to, or the kana under the live conversion. One line of
-/// plain text on the grid — no rule, no label; it only accompanies the
-/// preedit.
+/// One line of plain text on the grid — no rule, no label: the hint under
+/// an open kanji part (`[display] part_hint`, the words Tab would complete
+/// to), or the furigana over it (`[display] reading_display = "ruby"`).
 final class ReadingView: NSView {
-    static let font = NSFont.systemFont(ofSize: 13)
+    var font = NSFont.systemFont(ofSize: 13)
+    var color = NSColor.labelColor
     var text = "" {
         didSet { needsDisplay = true }
     }
-    private let pad = Swiss.grid
+    var pad = Swiss.grid
+    /// The panel's height; `nil` fits the text.
+    var height: CGFloat? = Swiss.grid * 3
 
     override var isFlipped: Bool { true }
 
     func fittingContentSize() -> NSSize {
-        let w = (text as NSString).size(withAttributes: [.font: Self.font]).width
-        return NSSize(width: ceil(w) + pad * 2, height: Swiss.grid * 3)
+        let size = (text as NSString).size(withAttributes: [.font: font])
+        return NSSize(width: ceil(size.width) + pad * 2, height: height ?? ceil(size.height) + 2)
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        let h = (text as NSString).size(withAttributes: [.font: Self.font]).height
+        let h = (text as NSString).size(withAttributes: [.font: font]).height
         (text as NSString).draw(
             at: NSPoint(x: pad, y: (bounds.height - h) / 2),
-            withAttributes: [.font: Self.font, .foregroundColor: NSColor.labelColor])
+            withAttributes: [.font: font, .foregroundColor: color])
+    }
+}
+
+/// Furigana: the reading of the preedit's last kanji run, small and grey,
+/// just above it, on a borderless ground.
+class RubyPanelController {
+    private let panel = Swiss.panel()
+    private let view = ReadingView()
+
+    init() {
+        view.font = NSFont.systemFont(ofSize: 10)
+        view.color = .secondaryLabelColor
+        view.pad = 2
+        view.height = nil
+        let box = Swiss.box()
+        box.borderWidth = 0
+        panel.contentView = box
+        view.translatesAutoresizingMaskIntoConstraints = false
+        let content = box.contentView!
+        content.addSubview(view)
+        NSLayoutConstraint.activate([
+            view.topAnchor.constraint(equalTo: content.topAnchor),
+            view.leadingAnchor.constraint(equalTo: content.leadingAnchor),
+            view.trailingAnchor.constraint(equalTo: content.trailingAnchor),
+            view.bottomAnchor.constraint(equalTo: content.bottomAnchor),
+        ])
+    }
+
+    /// Centered over `start..<end` (the run's edges in screen coordinates),
+    /// or flush with `start` when the client can't tell where `end` is.
+    func show(_ text: String, start: NSRect, endX: CGFloat) {
+        view.text = text
+        let size = view.fittingContentSize()
+        let x = endX > start.minX ? (start.minX + endX - size.width) / 2 : start.minX
+        panel.setFrame(NSRect(origin: NSPoint(x: x, y: start.maxY + 1), size: size), display: true)
+        panel.orderFront(nil)
+    }
+
+    func hide() {
+        panel.orderOut(nil)
     }
 }
 

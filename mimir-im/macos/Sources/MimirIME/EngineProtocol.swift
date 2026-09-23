@@ -18,6 +18,17 @@ struct KeyResult: Decodable {
     let selectKeys: Bool?
     /// `[display] candidate_layout`: "vertical" or "keyboard".
     let candidateLayout: String?
+    /// The reading to set above the preedit's last kanji run.
+    let ruby: Ruby?
+    /// Send `refresh` after this many milliseconds without a key.
+    let refreshMs: Int?
+}
+
+struct Ruby: Decodable {
+    /// Span in the preedit, in Unicode scalar values.
+    let start: Int
+    let end: Int
+    let text: String
 }
 
 struct PreeditAttr: Decodable {
