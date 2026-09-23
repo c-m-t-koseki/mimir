@@ -6,11 +6,13 @@ use crate::core::keycode::Keysym;
 
 // XKB keysyms for common keys (u32 aliases for the JSON payloads below)
 const XKB_KEY_K: u32 = Keysym::KEY_K.0;
+/// Capital K opens a kanji part (the part layer), so the engine composes
+/// instead of committing plain kana as typed.
+const XKB_KEY_K_UPPER: u32 = Keysym::KEY_K_UPPER.0;
 const XKB_KEY_A: u32 = Keysym::KEY_A.0;
 const XKB_KEY_LOWER_L: u32 = Keysym::KEY_L.0;
 const XKB_KEY_RETURN: u32 = Keysym::RETURN.0;
 const XKB_KEY_ESCAPE: u32 = Keysym::ESCAPE.0;
-const XKB_KEY_SPACE: u32 = Keysym::SPACE.0;
 
 fn test_server() -> ImServer {
     let mut server = ImServer::with_settings(Settings::default());
@@ -97,7 +99,7 @@ fn test_notification_gets_no_response() {
 fn test_typing_and_commit() {
     let mut server = test_server();
 
-    let resp = press(&mut server, XKB_KEY_K);
+    let resp = press(&mut server, XKB_KEY_K_UPPER);
     assert_eq!(resp["result"]["consumed"], true);
     let preedits = actions_of(&resp, "update_preedit");
     assert_eq!(preedits.last().unwrap()["text"], "k");
@@ -117,7 +119,7 @@ fn test_typing_and_commit() {
 #[test]
 fn test_escape_cancels_composition() {
     let mut server = test_server();
-    press(&mut server, XKB_KEY_K);
+    press(&mut server, XKB_KEY_K_UPPER);
     press(&mut server, XKB_KEY_A);
     let resp = press(&mut server, XKB_KEY_ESCAPE);
     assert_eq!(resp["result"]["consumed"], true);
@@ -133,7 +135,7 @@ fn test_escape_cancels_composition() {
 #[test]
 fn test_explicit_commit_method() {
     let mut server = test_server();
-    press(&mut server, XKB_KEY_K);
+    press(&mut server, XKB_KEY_K_UPPER);
     press(&mut server, XKB_KEY_A);
     let resp = request(
         &mut server,
@@ -158,12 +160,17 @@ fn test_explicit_commit_method() {
 #[test]
 fn test_select_candidate_commits_page_candidate() {
     let mut server = test_server();
-    press(&mut server, XKB_KEY_K);
+    press(&mut server, XKB_KEY_K_UPPER);
     press(&mut server, XKB_KEY_A);
 
-    // Space starts conversion; without a model the candidates come from
+    // Ctrl+N starts conversion inside a part; without a model the candidates come from
     // the hiragana/katakana fallback and the rewriter.
-    let resp = press(&mut server, XKB_KEY_SPACE);
+    let resp = request(
+        &mut server,
+        json!({"jsonrpc":"2.0","id":19,"method":"process_key","params":{
+            "keysym": Keysym::KEY_N.0, "modifiers": {"control": true}
+        }}),
+    );
     let shows = actions_of(&resp, "show_candidates");
     let first_text = shows.last().unwrap()["candidates"][0]["text"].clone();
 
