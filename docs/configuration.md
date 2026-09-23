@@ -1,6 +1,6 @@
 # Configuration
 
-設定ファイル: `~/.config/karukan-im/config.toml`（macOS: `~/Library/Application Support/com.karukan.karukan-im/config.toml`）
+設定ファイル: `~/.config/mimir-im/config.toml`（macOS: `~/Library/Application Support/com.mimir.mimir-im/config.toml`）
 
 ```toml
 [conversion]
@@ -46,7 +46,7 @@ phrases = [                    # フレーズ一覧（書くと既定一覧ご�
 ```
 
 > [!NOTE]
-> 上記は主要な設定項目の抜粋です。全項目の正確な既定値と説明は [`config/default.toml`](../karukan-im/core/config/default.toml) を参照してください（各設定行に日本語コメント付き）。
+> 上記は主要な設定項目の抜粋です。全項目の正確な既定値と説明は [`config/default.toml`](../mimir-im/core/config/default.toml) を参照してください（各設定行に日本語コメント付き）。
 
 ## モデルの定義（[models]）
 
@@ -77,7 +77,7 @@ my-model = "/home/user/models/my-model.gguf"
 
 既定のモデルを差し替えるには同じキーに書きます（`jinen-v2-small-q5 = "/path/to/model.gguf"`）。不正なエントリは起動時のログと、そのモデルを使うときのエラーに出ます。
 
-設定変更後はfcitx5の再起動（macOSは `killall KarukanIME`）で反映されます。
+設定変更後はfcitx5の再起動（macOSは `killall MimirIME`）で反映されます。
 
 ## Live Conversion
 
@@ -149,7 +149,7 @@ CPU高負荷時（Rustビルド中など）にかな漢字変換が遅くなる�
 
 ユーザーが選択した変換結果を記憶し、次回以降の変換で優先表示します。
 
-- 保存先: `~/.local/share/karukan-im/learning.tsv`（macOS: `~/Library/Application Support/com.karukan.karukan-im/learning.tsv`）
+- 保存先: `~/.local/share/mimir-im/learning.tsv`（macOS: `~/Library/Application Support/com.mimir.mimir-im/learning.tsv`）
 - 完全一致と前方一致（予測変換）の両方に対応
   - 例: 「早稲田大学」を一度変換すると、次回「わせだ」と入力した時点で候補に表示
 - 学習候補は変換時・入力中（auto-suggest）の両方で最大3件表示
@@ -158,4 +158,4 @@ CPU高負荷時（Rustビルド中など）にかな漢字変換が遅くなる�
 - 変換中に学習候補（📝）を選択して `Ctrl+Backspace`（macOSでは Ctrl+delete。`Ctrl+Delete` でも可）を押すと、そのエントリを学習履歴から削除できる。学習候補の選択中はフッターに「Ctrl+Backspaceで履歴から削除」と表示される
 - IME切り替え・ウィンドウ切り替え時に自動保存（commit のたびには保存しない）
 - `[learning] enabled = false` で無効化可能
-- 学習履歴をすべて削除するには: `rm ~/.local/share/karukan-im/learning.tsv`
+- 学習履歴をすべて削除するには: `rm ~/.local/share/mimir-im/learning.tsv`

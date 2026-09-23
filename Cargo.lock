@@ -1686,69 +1686,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "karukan-cli"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "axum",
- "clap",
- "indicatif",
- "karukan-engine",
- "karukan-im",
- "rayon",
- "serde",
- "serde_json",
- "tokio",
- "tower-http 0.7.1",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "karukan-engine"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "chrono",
- "criterion",
- "hf-hub",
- "llama-cpp-2",
- "serde",
- "serde_json",
- "serde_yaml",
- "tempfile",
- "thiserror",
- "tokenizers",
- "tracing",
- "unicode-normalization",
- "yada",
-]
-
-[[package]]
-name = "karukan-fcitx5"
-version = "0.1.0"
-dependencies = [
- "karukan-im",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "karukan-im"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "directories",
- "karukan-engine",
- "serde",
- "serde_json",
- "tempfile",
- "toml",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "konst"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1929,6 +1866,69 @@ checksum = "f7c44f8e672c00fe5308fa235f821cb4198414e1c77935c1ab6948d3fd78550e"
 dependencies = [
  "mime",
  "unicase",
+]
+
+[[package]]
+name = "mimir-cli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "clap",
+ "indicatif",
+ "mimir-engine",
+ "mimir-im",
+ "rayon",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tower-http 0.7.1",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "mimir-engine"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "criterion",
+ "hf-hub",
+ "llama-cpp-2",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "tempfile",
+ "thiserror",
+ "tokenizers",
+ "tracing",
+ "unicode-normalization",
+ "yada",
+]
+
+[[package]]
+name = "mimir-fcitx5"
+version = "0.1.0"
+dependencies = [
+ "mimir-im",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "mimir-im"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "directories",
+ "mimir-engine",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "toml",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

@@ -36,26 +36,26 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 ENV PATH="/root/.cargo/bin:${PATH}"
 
 # Copy source code
-WORKDIR /karukan
+WORKDIR /mimir
 COPY . .
 
 # Build and install fcitx5 addon (system install)
-# Note: CMake's karukan_rust_lib target runs `cargo build --release -p karukan-fcitx5`
-WORKDIR /karukan/karukan-im/fcitx5/fcitx5-addon
+# Note: CMake's mimir_rust_lib target runs `cargo build --release -p mimir-fcitx5`
+WORKDIR /mimir/mimir-im/fcitx5/fcitx5-addon
 RUN cmake -B build -DCMAKE_INSTALL_PREFIX=/usr \
     && cmake --build build -j"$(nproc)" \
     && cmake --install build
 
-# Configure fcitx5 profile to include karukan input method
-# This is required because karukan addon has OnDemand=True,
+# Configure fcitx5 profile to include mimir input method
+# This is required because mimir addon has OnDemand=True,
 # so fcitx5 only loads it when an input method group references it
 RUN mkdir -p /root/.config/fcitx5 && \
-    printf '[Groups/0]\nName=Default\nDefault Layout=us\nDefaultIM=karukan\n\n[Groups/0/Items/0]\nName=keyboard-us\nLayout=\n\n[Groups/0/Items/1]\nName=karukan\nLayout=\n\n[GroupOrder]\n0=Default\n' \
+    printf '[Groups/0]\nName=Default\nDefault Layout=us\nDefaultIM=mimir\n\n[Groups/0/Items/0]\nName=keyboard-us\nLayout=\n\n[Groups/0/Items/1]\nName=mimir\nLayout=\n\n[GroupOrder]\n0=Default\n' \
     > /root/.config/fcitx5/profile
 
 # Copy test script
 COPY tests/integration/test_fcitx5_addon.sh /test_fcitx5_addon.sh
 RUN chmod +x /test_fcitx5_addon.sh
 
-WORKDIR /karukan
+WORKDIR /mimir
 CMD ["/test_fcitx5_addon.sh"]

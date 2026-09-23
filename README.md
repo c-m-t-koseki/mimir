@@ -1,29 +1,26 @@
 <div align="center">
-  <img src="icon.png" width="128" alt="karukan" />
-  <h1>Karukan</h1>
+  <img src="icon.png" width="128" alt="mimir" />
+  <h1>Mimir</h1>
   <p>Linux・macOS向け日本語入力システム — ニューラルかな漢字変換エンジン</p>
+  <p><a href="https://github.com/togatoga/karukan">togatoga/karukan</a> の fork</p>
 
-  [![CI (engine)](https://github.com/togatoga/karukan/actions/workflows/karukan-engine-ci.yml/badge.svg)](https://github.com/togatoga/karukan/actions/workflows/karukan-engine-ci.yml)
-  [![CI (im)](https://github.com/togatoga/karukan/actions/workflows/karukan-im-ci.yml/badge.svg)](https://github.com/togatoga/karukan/actions/workflows/karukan-im-ci.yml)
-  [![CI (fcitx5)](https://github.com/togatoga/karukan/actions/workflows/karukan-fcitx5-ci.yml/badge.svg)](https://github.com/togatoga/karukan/actions/workflows/karukan-fcitx5-ci.yml)
-  [![CI (macos)](https://github.com/togatoga/karukan/actions/workflows/karukan-macos-ci.yml/badge.svg)](https://github.com/togatoga/karukan/actions/workflows/karukan-macos-ci.yml)
   [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE-MIT)
 </div>
 
 <div align="center">
-  <img src="images/demo.gif" width="800" alt="karukan demo" />
+  <img src="images/demo.gif" width="800" alt="mimir demo" />
 </div>
 
 ## プロジェクト構成
 
-IME本体(コアエンジン + 各プラットフォームのフロントエンド)は `karukan-im/` 配下にまとまっています。
+IME本体(コアエンジン + 各プラットフォームのフロントエンド)は `mimir-im/` 配下にまとまっています。
 
-- [karukan-im/](karukan-im/) — IME本体
-  - [core/](karukan-im/core/) — 共有IMEエンジン(crate: `karukan-im`) — ステートマシン、ローマ字変換、karukan-imserver(macOS向けJSON-RPCサーバー)
-  - [fcitx5/](karukan-im/fcitx5/) — Linux向けフロントエンド(crate: `karukan-fcitx5`) — fcitx5アドオン + C FFI
-  - [macos/](karukan-im/macos/) — macOS向けフロントエンド — Swift/InputMethodKit
-- [karukan-engine/](karukan-engine/) — コアライブラリ — ローマ字→ひらがな変換 + llama.cppによるニューラルかな漢字変換
-- [karukan-cli/](karukan-cli/) — CLIツール・サーバー — 辞書ビルド、Sudachi辞書生成、辞書ビューア、AJIMEE-Bench、HTTPサーバー
+- [mimir-im/](mimir-im/) — IME本体
+  - [core/](mimir-im/core/) — 共有IMEエンジン(crate: `mimir-im`) — ステートマシン、ローマ字変換、mimir-imserver(macOS向けJSON-RPCサーバー)
+  - [fcitx5/](mimir-im/fcitx5/) — Linux向けフロントエンド(crate: `mimir-fcitx5`) — fcitx5アドオン + C FFI
+  - [macos/](mimir-im/macos/) — macOS向けフロントエンド — Swift/InputMethodKit
+- [mimir-engine/](mimir-engine/) — コアライブラリ — ローマ字→ひらがな変換 + llama.cppによるニューラルかな漢字変換
+- [mimir-cli/](mimir-cli/) — CLIツール・サーバー — 辞書ビルド、Sudachi辞書生成、辞書ビューア、AJIMEE-Bench、HTTPサーバー
 
 ## 特徴
 
@@ -39,8 +36,8 @@ IME本体(コアエンジン + 各プラットフォームのフロントエン�
 
 ## インストール
 
-- **Linux (fcitx5)**: [karukan-fcitx5 の README](karukan-im/fcitx5/README.md#install) を参照
-- **macOS**: [karukan-macos の README](karukan-im/macos/README.md) を参照
+- **Linux (fcitx5)**: [mimir-fcitx5 の README](mimir-im/fcitx5/README.md#install) を参照
+- **macOS**: [mimir-macos の README](mimir-im/macos/README.md) を参照
 
 ## ドキュメント
 
@@ -58,4 +55,4 @@ MIT OR Apache-2.0 のデュアルライセンスで提供しています。
 - [MIT License](LICENSE-MIT)
 - [Apache License 2.0](LICENSE-APACHE)
 
-[karukan-engine/data/](karukan-engine/data/) 配下には [Mozc](https://github.com/google/mozc) から派生したデータを含み、こちらは [BSD 3-Clause License](http://opensource.org/licenses/BSD-3-Clause) のもとで配布されています。各派生ファイルの由来およびMozcの著作権表記は [THIRD_PARTY_LICENSES](THIRD_PARTY_LICENSES) を参照してください。
+[mimir-engine/data/](mimir-engine/data/) 配下には [Mozc](https://github.com/google/mozc) から派生したデータを含み、こちらは [BSD 3-Clause License](http://opensource.org/licenses/BSD-3-Clause) のもとで配布されています。各派生ファイルの由来およびMozcの著作権表記は [THIRD_PARTY_LICENSES](THIRD_PARTY_LICENSES) を参照してください。

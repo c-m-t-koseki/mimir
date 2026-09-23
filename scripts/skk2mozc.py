@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Convert an SKK dictionary into Mozc TSV for karukan's user_dicts/.
+"""Convert an SKK dictionary into Mozc TSV for mimir's user_dicts/.
 
     scripts/skk2mozc.py SKK-JISYO.L > skk-l.tsv
     scripts/skk2mozc.py ~/Library/Application\\ Support/AquaSKK/skk-jisyo.utf8 > skk-user.tsv
@@ -10,7 +10,7 @@ form in Mozc TSV. Annotations (`;...`), Lisp candidates (`(concat ...)`)
 and prefix/suffix keys (`>てき`, `ご>`) are dropped. The file's encoding
 (UTF-8 or EUC-JP) is detected. Large outputs belong in a binary dict:
 
-    cargo run --release --bin karukan-dict -- build --format mozc skk-l.tsv -o skk-l.bin
+    cargo run --release --bin mimir-dict -- build --format mozc skk-l.tsv -o skk-l.bin
 """
 
 import re
