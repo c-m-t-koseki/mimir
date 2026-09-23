@@ -130,12 +130,14 @@ class KarukanInputController: IMKInputController {
     static let japaneseModeID = "dev.togatoga.inputmethod.Karukan.Japanese"
     static let romanModeID = "dev.togatoga.inputmethod.Karukan.Roman"
 
-    /// The engine switched modes: show the badge and move the menu bar icon
-    /// (か / A) to the matching input mode.
-    private func showModeChange(_ mode: String?, client: any IMKTextInput) {
+    /// The engine switched modes: move the menu bar icon (か / A) to the
+    /// matching input mode, and show the badge. macOS shows its own indicator
+    /// only when it switched the mode itself (`badge: false`); our
+    /// `selectMode` gets none.
+    private func showModeChange(_ mode: String?, client: any IMKTextInput, badge: Bool = true) {
         guard let mode, mode != Self.lastMode else { return }
         Self.lastMode = mode
-        showBadge(client: client)
+        if badge { showBadge(client: client) }
         client.selectMode(mode == "ascii" ? Self.romanModeID : Self.japaneseModeID)
     }
 
@@ -161,7 +163,7 @@ class KarukanInputController: IMKInputController {
             EngineKeyEvent(keysym: keysym, modifiers: KeyModifiers()))
         {
             apply(actions: result.actions, client: client)
-            showModeChange(result.mode, client: client)
+            showModeChange(result.mode, client: client, badge: false)
         }
     }
 
@@ -192,12 +194,11 @@ class KarukanInputController: IMKInputController {
     // MARK: - Lifecycle
 
     /// Focus came to a client: keep its input mode (the menu bar icon) in
-    /// step with the engine's, which is shared by every app, and show it.
+    /// step with the engine's, which is shared by every app.
     override func activateServer(_ sender: Any!) {
         super.activateServer(sender)
         guard let client = sender as? (any IMKTextInput) else { return }
         client.selectMode(Self.lastMode == "ascii" ? Self.romanModeID : Self.japaneseModeID)
-        showBadge(client: client)
     }
 
     override func deactivateServer(_ sender: Any!) {
