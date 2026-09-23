@@ -14,6 +14,10 @@ struct KeyResult: Decodable {
     /// Text for the panel under an open kanji part (completions or the
     /// reading, per `[display] part_hint`); absent when there is none.
     let hint: String?
+    /// Whether a–l pick from the candidate window; absent from older engines.
+    let selectKeys: Bool?
+    /// `[display] candidate_layout`: "vertical" or "keyboard".
+    let candidateLayout: String?
 }
 
 struct PreeditAttr: Decodable {

@@ -8,6 +8,7 @@ import SwiftUI
 /// engine, which is what applies them (settings load at `init`).
 final class SettingsModel: ObservableObject {
     @Published var partHint = "completion"
+    @Published var candidateLayout = "vertical"
     @Published var predictive = false
     @Published var skkStyle = false
     @Published var model = ""
@@ -31,6 +32,7 @@ final class SettingsModel: ObservableObject {
             return
         }
         partHint = config["part_hint"] as? String ?? partHint
+        candidateLayout = config["candidate_layout"] as? String ?? candidateLayout
         predictive = config["predictive"] as? Bool ?? predictive
         skkStyle = config["skk_style"] as? Bool ?? skkStyle
         model = config["model"] as? String ?? model
@@ -41,7 +43,8 @@ final class SettingsModel: ObservableObject {
         let rawProfiles = config["profiles"] as? [String: [String: String]] ?? [:]
         profiles = rawProfiles.mapValues { ($0["model"] ?? "", $0["light_model"] ?? "") }
         saved = [
-            "display.part_hint": partHint, "conversion.predictive": "\(predictive)",
+            "display.part_hint": partHint, "display.candidate_layout": candidateLayout,
+            "conversion.predictive": "\(predictive)",
             "conversion.skk_style": "\(skkStyle)",
             "conversion.model": model, "conversion.light_model": lightModel,
             "learning.enabled": "\(learning)", "date.enabled": "\(date)",
@@ -283,6 +286,11 @@ struct GeneralTab: View {
                 Text("表示しない").tag("none")
             }
             .onChange(of: model.partHint) { model.set("display", "part_hint", $0) }
+            Picker("候補窓の並び", selection: $model.candidateLayout) {
+                Text("縦に一列").tag("vertical")
+                Text("キーの位置どおり（2段）").tag("keyboard")
+            }
+            .onChange(of: model.candidateLayout) { model.set("display", "candidate_layout", $0) }
             Toggle("予測候補を候補窓に出す", isOn: $model.predictive)
                 .onChange(of: model.predictive) { model.set("conversion", "predictive", $0) }
             Toggle("変換結果を学習する", isOn: $model.learning)

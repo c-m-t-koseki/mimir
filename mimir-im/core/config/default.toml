@@ -89,6 +89,9 @@ candidate_window = "always"
 # "completion" は打った読みで始まる過去の確定語（Tab で補完できる）、
 # "reading" はライブ変換の読み（平仮名）、"none" は何も出さない。
 part_hint = "completion"
+# 候補窓の並び（macOS）: "vertical"（縦に一列）/ "keyboard"（選択キーの位置どおりに
+# 2段: 上段 e r u i、下段 d f j k）
+candidate_layout = "vertical"
 
 # どのキーがどの記号を入力するか。幅（半角・全角）は [width] が決める。
 [symbol]

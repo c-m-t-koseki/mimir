@@ -9,6 +9,7 @@ pub mod protocol;
 use serde_json::{Value, json};
 
 use crate::config::Settings;
+use crate::config::settings::CandidateLayout;
 use crate::core::candidate::CandidateList;
 use crate::core::engine::{EngineAction, EngineConfig, EngineResult, InputMethodEngine};
 use crate::core::keycode::{KeyEvent, Keysym};
@@ -29,6 +30,8 @@ pub struct ImServer {
     engine: InputMethodEngine,
     /// Kanji-part layer every key goes through (plain kana / part / ASCII).
     part: PartLayer,
+    /// Reported with every key result, for the frontend's candidate window.
+    candidate_layout: CandidateLayout,
     /// Pending settings, consumed by the first successful `init`.
     settings: Option<Settings>,
     initialized: bool,
@@ -56,6 +59,7 @@ impl ImServer {
         Self {
             engine,
             part,
+            candidate_layout: settings.display.candidate_layout,
             settings: Some(settings),
             initialized: false,
         }
@@ -131,6 +135,7 @@ impl ImServer {
                 let settings = Settings::load_or_default();
                 Ok(json!({
                     "part_hint": settings.display.part_hint,
+                    "candidate_layout": settings.display.candidate_layout,
                     "predictive": settings.conversion.predictive,
                     "skk_style": settings.conversion.skk_style,
                     "model": settings.conversion.model,
@@ -240,6 +245,8 @@ impl ImServer {
                 PartMode::Plain | PartMode::Part => "kana",
             },
             hint: self.part.hint(&self.engine),
+            select_keys: self.part.picks_by_letter(),
+            candidate_layout: self.candidate_layout,
         })
         .map_err(internal_error)
     }

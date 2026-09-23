@@ -158,6 +158,18 @@ pub struct DisplaySettings {
     pub candidate_window: CandidateWindow,
     /// What the panel under a kanji part shows (macOS part input)
     pub part_hint: PartHint,
+    /// How the candidate window lays candidates out (macOS)
+    pub candidate_layout: CandidateLayout,
+}
+
+/// Candidates one per row, or each where its select key is on the
+/// keyboard (two rows: `e r u i` over `d f j k`).
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CandidateLayout {
+    #[default]
+    Vertical,
+    Keyboard,
 }
 
 /// Conversion strategy mode

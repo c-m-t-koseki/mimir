@@ -53,8 +53,16 @@ enum Swiss {
 ///     [a] 会議
 ///     [s] 懐疑                     [旧]    selected: key in a red square
 ///
-/// Keys are the ones that pick the row (`a s d f j k l`, see `part.rs`);
+/// Keys are the ones that pick the row (`j k f d u i r e`, see `part.rs`);
 /// descriptions share one flush-right column.
+///
+/// The keyboard layout instead puts each candidate where its key sits, two
+/// rows of the two hands' index and middle fingers (descriptions left out):
+///
+///     かいぎ                                  1 / 3
+///     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+///     [e] 快技   [r] 回議      [u] 会ぎ   [i] 海技
+///     [d] 懐疑   [f] 會議      [j] 会議   [k] かいぎ
 final class CandidateListView: NSView {
     struct Row {
         let key: String
@@ -66,6 +74,18 @@ final class CandidateListView: NSView {
     var header: String?
     var page: String?
     var rows: [Row] = []
+    /// Draw the keyboard layout instead of the list.
+    var keyboard = false
+
+    /// Keyboard layout: (row, column) of each page position, in the order
+    /// of the select keys j k f d u i r e.
+    private static let slots = [(1, 2), (1, 3), (1, 1), (1, 0), (0, 2), (0, 3), (0, 1), (0, 0)]
+    /// The gap between the hands, on top of a cell's own.
+    private let handGap = Swiss.grid * 2
+    private var cellWidth: CGFloat {
+        let textW = rows.map { size($0.text, Swiss.selectedFont).width }.max() ?? 0
+        return keySide + Swiss.grid * 1.5 + textW + Swiss.grid * 2
+    }
 
     private let pad = Swiss.grid * 2
     private let rowHeight = Swiss.grid * 4
@@ -81,6 +101,14 @@ final class CandidateListView: NSView {
     }
 
     func fittingContentSize() -> NSSize {
+        if keyboard {
+            let headW =
+                pad * 2 + size(header ?? "", Swiss.headFont).width
+                + size(page ?? "", Swiss.smallFont).width + Swiss.grid * 3
+            let width = max(pad * 2 + cellWidth * 4 + handGap, headW)
+            let height = Swiss.grid + headerHeight + rowHeight * 2 + Swiss.grid
+            return NSSize(width: ceil(width), height: height)
+        }
         let textW = rows.map { size($0.text, Swiss.selectedFont).width }.max() ?? 0
         let noteW = rows.compactMap { $0.note.map { size($0, Swiss.smallFont).width } }.max()
         var width = textX + textW + pad
@@ -113,9 +141,33 @@ final class CandidateListView: NSView {
             NSRect(x: pad, y: y - 4, width: bounds.width - pad * 2, height: 2).fill()
             y += 2
         }
+        if keyboard {
+            for (index, row) in rows.enumerated() where index < Self.slots.count {
+                let (line, column) = Self.slots[index]
+                let x = pad + CGFloat(column) * cellWidth + (column >= 2 ? handGap : 0)
+                drawCell(row, x: x, mid: y + CGFloat(line) * rowHeight + rowHeight / 2)
+            }
+            return
+        }
         for row in rows {
             let mid = y + rowHeight / 2
-            let square = NSRect(x: pad, y: mid - keySide / 2, width: keySide, height: keySide)
+            drawCell(row, x: pad, mid: mid)
+            if let note = row.note {
+                let noteSize = size(note, Swiss.smallFont)
+                (note as NSString).draw(
+                    at: NSPoint(x: bounds.width - pad - noteSize.width, y: mid - noteSize.height / 2),
+                    withAttributes: [
+                        .font: Swiss.smallFont, .foregroundColor: NSColor.secondaryLabelColor,
+                    ])
+            }
+            y += rowHeight
+        }
+    }
+
+    /// A key square (red when selected) and the candidate beside it.
+    private func drawCell(_ row: Row, x: CGFloat, mid: CGFloat) {
+        do {
+            let square = NSRect(x: x, y: mid - keySide / 2, width: keySide, height: keySide)
             if row.selected {
                 Swiss.accent.setFill()
                 square.fill()
@@ -130,17 +182,8 @@ final class CandidateListView: NSView {
             let font = row.selected ? Swiss.selectedFont : Swiss.candidateFont
             let textH = size(row.text, font).height
             (row.text as NSString).draw(
-                at: NSPoint(x: textX, y: mid - textH / 2),
+                at: NSPoint(x: x + textX - pad, y: mid - textH / 2),
                 withAttributes: [.font: font, .foregroundColor: NSColor.labelColor])
-            if let note = row.note {
-                let noteSize = size(note, Swiss.smallFont)
-                (note as NSString).draw(
-                    at: NSPoint(x: bounds.width - pad - noteSize.width, y: mid - noteSize.height / 2),
-                    withAttributes: [
-                        .font: Swiss.smallFont, .foregroundColor: NSColor.secondaryLabelColor,
-                    ])
-            }
-            y += rowHeight
         }
     }
 }
@@ -151,7 +194,7 @@ final class CandidateListView: NSView {
 /// page metadata, so this controller only maps it onto `CandidateListView`.
 /// The aux text (the reading, see `part.rs`) heads the list.
 class CandidateWindowController {
-    static let selectKeys = Array("asdfjkl")
+    static let selectKeys = Array("jkfduire")
 
     private let panel: NSPanel
     private let listView = CandidateListView()
@@ -164,6 +207,11 @@ class CandidateWindowController {
         let totalPages: Int
     }
     private var pageState: PageState?
+    /// Label the rows with the select keys (off once the selection was
+    /// stepped with Ctrl+N/P, when the keys type on instead).
+    var showsKeys = true
+    /// `[display] candidate_layout`, from the engine.
+    var layout = "vertical"
 
     init() {
         panel = Swiss.panel()
@@ -222,10 +270,11 @@ class CandidateWindowController {
             return
         }
         listView.header = auxText.flatMap { $0.isEmpty ? nil : $0 }
+        listView.keyboard = layout == "keyboard"
         listView.page = state.totalPages > 1 ? "\(state.page + 1) / \(state.totalPages)" : nil
         listView.rows = state.candidates.enumerated().map { index, candidate in
             CandidateListView.Row(
-                key: index < Self.selectKeys.count ? String(Self.selectKeys[index]) : "",
+                key: showsKeys && index < Self.selectKeys.count ? String(Self.selectKeys[index]) : "",
                 text: candidate.text,
                 note: candidate.description,
                 selected: index == state.cursor)
