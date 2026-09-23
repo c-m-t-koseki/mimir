@@ -153,6 +153,10 @@ impl ImServer {
                     "date": settings.date.enabled,
                     "models": settings.models.keys().collect::<Vec<_>>(),
                     "profiles": settings.profiles,
+                    // For frontends that edit files beside the engine (the
+                    // user dictionaries) or watch them for changes.
+                    "config_file": Settings::config_file(),
+                    "user_dict_dir": Settings::user_dict_dir(),
                 }))
             }
             "set_config" => {
@@ -184,6 +188,9 @@ impl ImServer {
                 Ok(json!({"restart": false}))
             }
             "learning_list" | "history_list" => {
+                // Another engine (Windows runs one per application) may have
+                // written since: list what is on disk now.
+                self.engine.save_learning();
                 let entries = if method == "history_list" {
                     self.engine.history_entries()
                 } else {
