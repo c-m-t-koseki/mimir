@@ -52,7 +52,7 @@ private func connectionName() -> String {
     if let name = Bundle.main.object(forInfoDictionaryKey: "InputMethodConnectionName") as? String {
         return name
     }
-    return (Bundle.main.bundleIdentifier ?? "dev.togatoga.inputmethod.Karukan") + "_Connection"
+    return (Bundle.main.bundleIdentifier ?? "dev.tkoseki.inputmethod.Mimir") + "_Connection"
 }
 
 setupLogging()

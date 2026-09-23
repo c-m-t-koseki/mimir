@@ -84,7 +84,7 @@ cmake --install build
 cd karukan-im/macos
 
 make test      # Swift tests (incl. integration tests against a real karukan-imserver)
-make install   # Build, assemble Karukan.app, install to ~/Library/Input Methods (auto-downloads dict.bin if missing and prefetches every configured [models] entry into the HF cache)
+make install   # Build, assemble Mimir.app, install to ~/Library/Input Methods (auto-downloads dict.bin if missing and prefetches every configured [models] entry into the HF cache)
 ```
 
 First install requires logout/login; afterwards `make install` + `killall KarukanIME` suffices.
@@ -182,7 +182,7 @@ Swift/InputMethodKit frontend. All IME state lives in karukan-imserver (spawned 
 
 ## macOS Input Mode Design
 
-This fork registers **two input modes** in `Info.plist`: Japanese (`dev.togatoga.inputmethod.Karukan.Japanese`) and Roman (`dev.togatoga.inputmethod.Karukan.Roman`). They mirror the part layer's kana / ASCII modes (`karukan-im/core/src/core/part.rs`) so the menu bar icon shows which one is active: the frontend calls `selectMode` whenever `KeyResult.mode` changes, and `setValue(_:forTag:)` brings the engine along when macOS switches the mode (input menu). The JIS 英数 key is consumed and sent to the engine as `Eisu_toggle` (ASCII mode); かな is sent as `Super_R` (kana mode). Upstream Karukan registers only the Japanese mode and leaves Latin input to the OS English source; this fork keeps Latin input inside Karukan.
+This fork registers **two input modes** in `Info.plist`: Japanese (`dev.tkoseki.inputmethod.Mimir.Japanese`) and Roman (`dev.tkoseki.inputmethod.Mimir.Roman`). They mirror the part layer's kana / ASCII modes (`karukan-im/core/src/core/part.rs`) so the menu bar icon shows which one is active: the frontend calls `selectMode` whenever `KeyResult.mode` changes, and `setValue(_:forTag:)` brings the engine along when macOS switches the mode (input menu). The JIS 英数 key is consumed and sent to the engine as `Eisu_toggle` (ASCII mode); かな is sent as `Super_R` (kana mode). Upstream Karukan registers only the Japanese mode and leaves Latin input to the OS English source; this fork keeps Latin input inside Karukan.
 
 The engine-internal `InputMode::Alphabet` (entered via Shift+letter on Linux/fcitx5) is a separate Rust engine concept, unused by the macOS part layer. Do not conflate the two.
 

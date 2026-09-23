@@ -1,5 +1,5 @@
 OUTDIR = out
-APP = $(OUTDIR)/Karukan.app
+APP = $(OUTDIR)/Mimir.app
 INSTALL_DIR = $(HOME)/Library/Input Methods
 CARGO_MANIFEST = ../../Cargo.toml
 CARGO_TARGET = ../../target
@@ -71,11 +71,12 @@ install-models: build
 		echo "WARNING: model prefetch failed; models will be downloaded on first launch"
 
 install: bundle install-dict install-models
-	rm -rf "$(INSTALL_DIR)/Karukan.app"
+	# Karukan.app: this IME before it was renamed Mimir.
+	rm -rf "$(INSTALL_DIR)/Mimir.app" "$(INSTALL_DIR)/Karukan.app"
 	cp -a $(APP) "$(INSTALL_DIR)/"
 	-killall KarukanIME 2>/dev/null || true
-	@echo "Installed to $(INSTALL_DIR)/Karukan.app"
-	@echo "First install: log out and back in, then add Karukan in System Settings > Keyboard > Input Sources."
+	@echo "Installed to $(INSTALL_DIR)/Mimir.app"
+	@echo "First install: log out and back in, then add Mimir in System Settings > Keyboard > Input Sources."
 
 fmt:
 	swift-format format -ri Sources/ Tests/
