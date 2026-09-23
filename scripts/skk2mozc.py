@@ -3,6 +3,11 @@
 
     scripts/skk2mozc.py SKK-JISYO.L > skk-l.tsv
     scripts/skk2mozc.py ~/Library/Application\\ Support/AquaSKK/skk-jisyo.utf8 > skk-user.tsv
+    scripts/skk2mozc.py --abbrev SKK-JISYO.L > skk-abbrev.tsv
+
+`--abbrev` takes the entries read in ASCII instead (`github /GitHub/`),
+the ones SKK's abbrev input (`/`) converts. They share no reading with
+kana input, so even a big dictionary's worth ranks above nothing there.
 
 Only okuri-nasi entries carry over: an okuri-ari key (`かk /書/`) names a
 stem plus the romaji of its inflection, which has no reading-to-surface
@@ -17,6 +22,7 @@ import re
 import sys
 
 READING = re.compile(r"^[ぁ-ゖー]+$")
+ABBREV = re.compile(r"^[A-Za-z0-9][!-~]*$")
 
 
 def read_text(path):
@@ -29,12 +35,12 @@ def read_text(path):
     return data.decode("euc_jp", errors="replace")
 
 
-def convert(text, comment):
+def convert(text, comment, reading_pattern=READING):
     for line in text.splitlines():
         if not line or line.startswith(";"):
             continue
         reading, _, rest = line.partition(" /")
-        if not READING.match(reading):
+        if not reading_pattern.match(reading):
             continue
         for candidate in rest.split("/"):
             surface = candidate.split(";", 1)[0]
@@ -43,9 +49,12 @@ def convert(text, comment):
 
 
 def main():
-    if len(sys.argv) != 2:
+    args = sys.argv[1:]
+    abbrev = "--abbrev" in args
+    args = [a for a in args if a != "--abbrev"]
+    if len(args) != 1:
         sys.exit(__doc__)
-    for row in convert(read_text(sys.argv[1]), "SKK"):
+    for row in convert(read_text(args[0]), "SKK", ABBREV if abbrev else READING):
         print(row)
 
 
@@ -64,6 +73,8 @@ def _check():
         "かいぎ\t懐疑\t名詞\tSKK",
         "きょう\t今日\t名詞\tSKK",
     ], rows
+    rows = list(convert("github /GitHub/\nかいぎ /会議/\n", "SKK", ABBREV))
+    assert rows == ["github\tGitHub\t名詞\tSKK"], rows
 
 
 if __name__ == "__main__":

@@ -357,6 +357,25 @@ impl InputMethodEngine {
 
     /// End the composition without committing, returning its kana reading
     /// (the word-registration flow takes the reading, then asks for the word).
+    /// SKK's abbrev input (`/`): letters go in as typed, until converted.
+    pub fn start_abbrev(&mut self) {
+        self.mode.enter_temporary(InputMode::Alphabet);
+    }
+
+    /// Leave an abbrev input that never got a letter (a composed one ends
+    /// with its composition).
+    pub fn end_abbrev(&mut self) {
+        if matches!(self.state, InputState::Empty) {
+            self.mode.exit_temporary();
+        }
+    }
+
+    /// Open the candidate window on the composition: what Space does,
+    /// except in alphabet input, where Space types a space.
+    pub fn convert(&mut self) -> EngineResult {
+        self.start_conversion(LearningLookup::Use)
+    }
+
     pub fn take_reading(&mut self) -> String {
         self.settle_romaji();
         let reading = self.input_buf.reading();
