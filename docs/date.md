@@ -29,7 +29,7 @@ phrases = [
 ]
 ```
 
-既定で きょう・きのう・おととい・あした・あす・あさって・しあさって（日付）、いま（時刻）、にちじ（日時）が登録されています（正確な既定値は [`config/default.toml`](../karukan-im/core/config/default.toml) 参照）。
+既定で きょう・きのう・おととい・あした・あす・あさって・しあさって（日付）、いま（時刻）、にちじ（日時）が登録されています（正確な既定値は [`config/default.toml`](../mimir-im/core/config/default.toml) 参照）。
 
 `phrases` を書くと既定の一覧は**丸ごと置き換わります**。フレーズを増やしたり一部だけ変えたりするときは、default.toml の一覧をコピーして編集してください。使わないフレーズは行ごと消せば無効になります。
 
@@ -77,4 +77,4 @@ phrases = [
 
 ## 設定の反映
 
-設定変更後は fcitx5 の再起動（macOS は `killall KarukanIME`）で反映されます。
+設定変更後は fcitx5 の再起動（macOS は `killall MimirIME`）で反映されます。

@@ -9,7 +9,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
-IMAGE_NAME="karukan-fcitx5-test"
+IMAGE_NAME="mimir-fcitx5-test"
 
 echo "Building Docker image..."
 docker build \

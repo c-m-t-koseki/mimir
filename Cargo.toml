@@ -1,5 +1,5 @@
 [workspace]
-members = ["karukan-engine", "karukan-cli", "karukan-im/core", "karukan-im/fcitx5"]
+members = ["mimir-engine", "mimir-cli", "mimir-im/core", "mimir-im/fcitx5"]
 resolver = "3"
 
 [workspace.package]
@@ -23,8 +23,8 @@ thiserror = "2"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 
 # Internal crates
-karukan-engine = { path = "karukan-engine" }
-karukan-im = { path = "karukan-im/core" }
+mimir-engine = { path = "mimir-engine" }
+mimir-im = { path = "mimir-im/core" }
 
 # Dev dependencies shared
 tempfile = "3"
