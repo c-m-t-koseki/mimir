@@ -134,6 +134,7 @@ impl ImServer {
                     "model": settings.conversion.model,
                     "light_model": settings.conversion.light_model,
                     "learning": settings.learning.enabled,
+                    "date": settings.date.enabled,
                     "models": settings.models.keys().collect::<Vec<_>>(),
                     "profiles": settings.profiles,
                 }))

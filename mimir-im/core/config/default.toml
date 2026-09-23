@@ -131,6 +131,8 @@ digit = "half"
 # {{} はリテラルの「{」。数値トークンは :bare でゼロ埋めなし（9月）、
 # :kanji で漢数字（九月、二〇二六）。
 [date]
+# false で日付・時刻の候補を出さない
+enabled = true
 # formats を持たないフレーズが共通で使うフォーマット
 formats = [
     "{YEAR}/{MONTH}/{DATE}",

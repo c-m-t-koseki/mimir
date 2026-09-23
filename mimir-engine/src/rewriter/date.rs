@@ -17,8 +17,11 @@ use super::number::{to_kanji, to_kanji_digits};
 use super::{RewriteOutput, Rewriter};
 
 /// The `[date]` section of config.toml.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DateConfig {
+    /// Off → no date/time candidates at all.
+    #[serde(default = "enabled_default")]
+    pub enabled: bool,
     /// Formats shared by every phrase that doesn't bring its own, so the
     /// date phrases are one line each.
     #[serde(default)]
@@ -39,6 +42,20 @@ pub struct DatePhrase {
     #[serde(default)]
     pub offset_days: i64,
     pub formats: Option<Vec<String>>,
+}
+
+fn enabled_default() -> bool {
+    true
+}
+
+impl Default for DateConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            formats: Vec::new(),
+            phrases: Vec::new(),
+        }
+    }
 }
 
 const WEEKDAYS: [&str; 7] = ["月", "火", "水", "木", "金", "土", "日"];
@@ -159,6 +176,9 @@ impl DateRewriter {
     /// Candidates for `reading` as of `now`; the clock is a parameter so
     /// tests can pin it.
     fn candidates_at(&self, reading: &str, now: NaiveDateTime) -> Vec<RewriteOutput> {
+        if !self.config.enabled {
+            return Vec::new();
+        }
         let Some(phrase) = self.config.phrases.iter().find(|p| p.reading == reading) else {
             return Vec::new();
         };
@@ -208,6 +228,7 @@ mod tests {
 
     fn rewriter(reading: &str, offset_days: i64, formats: &[&str]) -> DateRewriter {
         DateRewriter::new(DateConfig {
+            enabled: true,
             formats: Vec::new(),
             phrases: vec![DatePhrase {
                 reading: reading.to_string(),
@@ -364,6 +385,7 @@ mod tests {
     #[test]
     fn phrase_without_formats_uses_the_shared_list() {
         let r = DateRewriter::new(DateConfig {
+            enabled: true,
             formats: vec!["{YEAR}/{MONTH}/{DATE}".to_string()],
             phrases: vec![DatePhrase {
                 reading: "あした".to_string(),
@@ -375,6 +397,7 @@ mod tests {
         assert_eq!(texts(&out), vec!["2026/09/06"]);
         // An explicit empty list renders nothing instead of falling back.
         let r = DateRewriter::new(DateConfig {
+            enabled: true,
             formats: vec!["{YEAR}".to_string()],
             phrases: vec![DatePhrase {
                 reading: "あした".to_string(),
@@ -383,6 +406,13 @@ mod tests {
             }],
         });
         assert!(r.candidates_at("あした", at(2026, 9, 5, 0, 0)).is_empty());
+    }
+
+    #[test]
+    fn disabled_renders_nothing() {
+        let mut r = rewriter("きょう", 0, &["{YEAR}"]);
+        r.config.enabled = false;
+        assert!(r.candidates_at("きょう", at(2026, 9, 6, 0, 0)).is_empty());
     }
 
     #[test]

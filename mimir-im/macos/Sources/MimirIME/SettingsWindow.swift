@@ -12,6 +12,7 @@ final class SettingsModel: ObservableObject {
     @Published var model = ""
     @Published var lightModel = ""
     @Published var learning = true
+    @Published var date = true
     @Published var models: [String] = []
     /// Saved model combinations: name → (main, light).
     @Published var profiles: [String: (model: String, light: String)] = [:]
@@ -33,13 +34,14 @@ final class SettingsModel: ObservableObject {
         model = config["model"] as? String ?? model
         lightModel = config["light_model"] as? String ?? lightModel
         learning = config["learning"] as? Bool ?? learning
+        date = config["date"] as? Bool ?? date
         models = config["models"] as? [String] ?? models
         let rawProfiles = config["profiles"] as? [String: [String: String]] ?? [:]
         profiles = rawProfiles.mapValues { ($0["model"] ?? "", $0["light_model"] ?? "") }
         saved = [
             "display.part_hint": partHint, "conversion.predictive": "\(predictive)",
             "conversion.model": model, "conversion.light_model": lightModel,
-            "learning.enabled": "\(learning)",
+            "learning.enabled": "\(learning)", "date.enabled": "\(date)",
         ]
         error = nil
     }
@@ -280,6 +282,8 @@ struct GeneralTab: View {
                 .onChange(of: model.predictive) { model.set("conversion", "predictive", $0) }
             Toggle("変換結果を学習する", isOn: $model.learning)
                 .onChange(of: model.learning) { model.set("learning", "enabled", $0) }
+            Toggle("きょう・いま などを日付・時刻に変換する", isOn: $model.date)
+                .onChange(of: model.date) { model.set("date", "enabled", $0) }
         }
         .formStyle(.grouped)
     }
