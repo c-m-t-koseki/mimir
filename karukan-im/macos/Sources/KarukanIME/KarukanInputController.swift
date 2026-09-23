@@ -73,11 +73,17 @@ class KarukanInputController: IMKInputController {
             return true
         }
 
-        // JIS 英数 key: flush pending composition so preedit doesn't linger
-        // after macOS switches to the English input source.
+        // JIS 英数 key (and Karabiner's left-⌘ tap → 英数): Karukan's own
+        // ASCII mode, not the OS English input source. Consumed like かな,
+        // so the system never switches sources on it.
         if event.keyCode == KeyCodeMap.eisuKeyCode {
-            flushComposition(client: client)
-            return false
+            let key = EngineKeyEvent(keysym: KeyCodeMap.eisuKeysym, modifiers: KeyModifiers())
+            if let result = engineClient.processKeySync(key) {
+                apply(actions: result.actions, client: client)
+                showModeChange(result.mode, client: client)
+                showHint(result.hint, client: client)
+            }
+            return true
         }
 
         guard let key = KeyCodeMap.translate(event: event) else { return false }
@@ -121,12 +127,42 @@ class KarukanInputController: IMKInputController {
         Self.readingPanel.show(hint, cursorRect: rect)
     }
 
+    static let japaneseModeID = "dev.togatoga.inputmethod.Karukan.Japanese"
+    static let romanModeID = "dev.togatoga.inputmethod.Karukan.Roman"
+
+    /// The engine switched modes: show the badge and move the menu bar icon
+    /// (か / A) to the matching input mode.
     private func showModeChange(_ mode: String?, client: any IMKTextInput) {
         guard let mode, mode != Self.lastMode else { return }
         Self.lastMode = mode
+        showBadge(client: client)
+        client.selectMode(mode == "ascii" ? Self.romanModeID : Self.japaneseModeID)
+    }
+
+    private func showBadge(client: any IMKTextInput) {
         var rect = NSRect.zero
         client.attributes(forCharacterIndex: 0, lineHeightRectangle: &rect)
-        Self.modeBadge.show(mode: mode, near: rect)
+        Self.modeBadge.show(mode: Self.lastMode, near: rect)
+    }
+
+    /// macOS switched the input mode (the input menu, or our own
+    /// `selectMode`): bring the engine along when it isn't there yet.
+    override func setValue(_ value: Any!, forTag tag: Int, client sender: Any!) {
+        guard tag == kTextServiceInputModePropertyTag, let modeID = value as? String,
+            let client = sender as? (any IMKTextInput)
+        else {
+            super.setValue(value, forTag: tag, client: sender)
+            return
+        }
+        let wantASCII = modeID == Self.romanModeID
+        guard wantASCII != (Self.lastMode == "ascii") else { return }
+        let keysym = wantASCII ? KeyCodeMap.eisuKeysym : KeyCodeMap.superRKeysym
+        if let result = engineClient.processKeySync(
+            EngineKeyEvent(keysym: keysym, modifiers: KeyModifiers()))
+        {
+            apply(actions: result.actions, client: client)
+            showModeChange(result.mode, client: client)
+        }
     }
 
     /// Send the return-to-hiragana toggle (Super_R) to the engine and apply
@@ -154,6 +190,15 @@ class KarukanInputController: IMKInputController {
     }
 
     // MARK: - Lifecycle
+
+    /// Focus came to a client: keep its input mode (the menu bar icon) in
+    /// step with the engine's, which is shared by every app, and show it.
+    override func activateServer(_ sender: Any!) {
+        super.activateServer(sender)
+        guard let client = sender as? (any IMKTextInput) else { return }
+        client.selectMode(Self.lastMode == "ascii" ? Self.romanModeID : Self.japaneseModeID)
+        showBadge(client: client)
+    }
 
     override func deactivateServer(_ sender: Any!) {
         // A right-⌘ press armed before a focus switch must not fire after
