@@ -9,6 +9,7 @@ import SwiftUI
 final class SettingsModel: ObservableObject {
     @Published var partHint = "completion"
     @Published var candidateLayout = "vertical"
+    @Published var candidateWindow = "always"
     @Published var readingDisplay = "tail"
     @Published var tailDelayMs = 250
     @Published var tailDeleteDelayMs = 600
@@ -38,6 +39,7 @@ final class SettingsModel: ObservableObject {
         }
         partHint = config["part_hint"] as? String ?? partHint
         candidateLayout = config["candidate_layout"] as? String ?? candidateLayout
+        candidateWindow = config["candidate_window"] as? String ?? candidateWindow
         readingDisplay = config["reading_display"] as? String ?? readingDisplay
         tailDelayMs = config["tail_delay_ms"] as? Int ?? tailDelayMs
         tailDeleteDelayMs = config["tail_delete_delay_ms"] as? Int ?? tailDeleteDelayMs
@@ -53,6 +55,7 @@ final class SettingsModel: ObservableObject {
         keys = config["keys"] as? [String: String] ?? keys
         saved = [
             "display.part_hint": partHint, "display.candidate_layout": candidateLayout,
+            "display.candidate_window": candidateWindow,
             "display.reading_display": readingDisplay, "display.tail_delay_ms": "\(tailDelayMs)",
             "display.tail_delete_delay_ms": "\(tailDeleteDelayMs)",
             "conversion.predictive": "\(predictive)",
@@ -287,50 +290,63 @@ final class LearningHistory: ObservableObject {
 
 // MARK: - Views
 
+/// The general settings, in three groups: how input goes (操作), what
+/// shows while typing (表示), and what conversion offers and keeps (変換).
 struct GeneralTab: View {
     @ObservedObject var model: SettingsModel
 
     var body: some View {
         Form {
-            Toggle("SKK 式の入力（大文字で漢字の変換を始め、小文字は平仮名で確定）", isOn: $model.skkStyle)
-                .onChange(of: model.skkStyle) { model.set("conversion", "skk_style", $0) }
-            Picker("変換中の読み", selection: $model.readingDisplay) {
-                Text("末尾1字を平仮名で残す").tag("tail")
-                Text("ふりがな（最後の漢字の上）").tag("ruby")
-                Text("読みを添える（天気〈てんき〉）").tag("inline")
-                Text("表示しない").tag("none")
+            Section("操作") {
+                Toggle("SKK 式の入力（大文字で漢字の変換を始め、小文字は平仮名で確定）", isOn: $model.skkStyle)
+                    .onChange(of: model.skkStyle) { model.set("conversion", "skk_style", $0) }
             }
-            .onChange(of: model.readingDisplay) { model.set("display", "reading_display", $0) }
-            if model.readingDisplay == "tail" {
-                Stepper(
-                    "手を止めてから変換するまで: \(model.tailDelayMs) ミリ秒", value: $model.tailDelayMs,
-                    in: 50...1000, step: 50
+            Section("表示") {
+                Picker("変換中の読み", selection: $model.readingDisplay) {
+                    Text("末尾1字を平仮名で残す").tag("tail")
+                    Text("ふりがな（最後の漢字の上）").tag("ruby")
+                    Text("読みを添える（天気〈てんき〉）").tag("inline")
+                    Text("表示しない").tag("none")
+                }
+                .onChange(of: model.readingDisplay) { model.set("display", "reading_display", $0) }
+                if model.readingDisplay == "tail" {
+                    Stepper(
+                        "手を止めてから変換するまで: \(model.tailDelayMs) ミリ秒", value: $model.tailDelayMs,
+                        in: 50...1000, step: 50
+                    )
+                    .onChange(of: model.tailDelayMs) { model.set("display", "tail_delay_ms", $0) }
+                    Stepper(
+                        "削除のあと変換するまで: \(model.tailDeleteDelayMs) ミリ秒",
+                        value: $model.tailDeleteDelayMs, in: 50...2000, step: 50
+                    )
+                    .onChange(of: model.tailDeleteDelayMs) { model.set("display", "tail_delete_delay_ms", $0) }
+                }
+                Picker("候補窓を出す", selection: $model.candidateWindow) {
+                    Text("変換を始めてから（Ctrl+N など）").tag("conversion")
+                    Text("入力中から常に").tag("always")
+                }
+                .onChange(of: model.candidateWindow) { model.set("display", "candidate_window", $0) }
+                Picker("候補窓の並び", selection: $model.candidateLayout) {
+                    Text("縦に一列").tag("vertical")
+                    Text("キーの位置どおり（2段）").tag("keyboard")
+                }
+                .onChange(of: model.candidateLayout) { model.set("display", "candidate_layout", $0) }
+                Toggle(
+                    "補完候補を表示する（Tab で補完）",
+                    isOn: Binding(
+                        get: { model.partHint == "completion" },
+                        set: { model.partHint = $0 ? "completion" : "none" })
                 )
-                .onChange(of: model.tailDelayMs) { model.set("display", "tail_delay_ms", $0) }
-                Stepper(
-                    "削除のあと変換するまで: \(model.tailDeleteDelayMs) ミリ秒",
-                    value: $model.tailDeleteDelayMs, in: 50...2000, step: 50
-                )
-                .onChange(of: model.tailDeleteDelayMs) { model.set("display", "tail_delete_delay_ms", $0) }
+                .onChange(of: model.partHint) { model.set("display", "part_hint", $0) }
             }
-            Toggle(
-                "補完候補を表示する（Tab で補完）",
-                isOn: Binding(
-                    get: { model.partHint == "completion" },
-                    set: { model.partHint = $0 ? "completion" : "none" })
-            )
-            .onChange(of: model.partHint) { model.set("display", "part_hint", $0) }
-            Picker("候補窓の並び", selection: $model.candidateLayout) {
-                Text("縦に一列").tag("vertical")
-                Text("キーの位置どおり（2段）").tag("keyboard")
+            Section("変換") {
+                Toggle("予測候補を候補窓に出す", isOn: $model.predictive)
+                    .onChange(of: model.predictive) { model.set("conversion", "predictive", $0) }
+                Toggle("変換結果を学習する", isOn: $model.learning)
+                    .onChange(of: model.learning) { model.set("learning", "enabled", $0) }
+                Toggle("きょう・いま などを日付・時刻に変換する", isOn: $model.date)
+                    .onChange(of: model.date) { model.set("date", "enabled", $0) }
             }
-            .onChange(of: model.candidateLayout) { model.set("display", "candidate_layout", $0) }
-            Toggle("予測候補を候補窓に出す", isOn: $model.predictive)
-                .onChange(of: model.predictive) { model.set("conversion", "predictive", $0) }
-            Toggle("変換結果を学習する", isOn: $model.learning)
-                .onChange(of: model.learning) { model.set("learning", "enabled", $0) }
-            Toggle("きょう・いま などを日付・時刻に変換する", isOn: $model.date)
-                .onChange(of: model.date) { model.set("date", "enabled", $0) }
         }
         .formStyle(.grouped)
     }

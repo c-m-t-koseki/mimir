@@ -147,7 +147,7 @@ scripts/skk2mozc.py --abbrev ~/Library/Application\ Support/AquaSKK/SKK-JISYO.L 
 | タブ | できること |
 |---|---|
 | キー | 漢字パート入力のキーの割り当て（`[keys]`） |
-| 一般 | SKK 式の入力（`[conversion] skk_style`）、変換中の読み（`[display] reading_display` `tail_delay_ms` `tail_delete_delay_ms`）、補完候補の表示（`[display] part_hint`）、予測候補（`[conversion] predictive`）、学習の有無（`[learning] enabled`）、日付・時刻の変換（`[date] enabled`） |
+| 一般 | 「操作」SKK 式の入力（`[conversion] skk_style`）。「表示」変換中の読み（`[display] reading_display` `tail_delay_ms` `tail_delete_delay_ms`）、候補窓を出すタイミング（`[display] candidate_window`）、候補窓の並び（`[display] candidate_layout`）、補完候補の表示（`[display] part_hint`）。「変換」予測候補（`[conversion] predictive`）、学習の有無（`[learning] enabled`）、日付・時刻の変換（`[date] enabled`） |
 | モデル | メイン / 軽量モデルの選択。組み合わせに名前を付けて保存・切替・削除（`[profiles.<名前>]`）。「計測する」で全モデルの精度・1回あたりの時間・読込時間をこの Mac で測る |
 | 辞書 | `user_dicts/` の TSV 辞書の一覧・検索・追加（`registered.tsv` へ）・削除。バイナリ辞書は名前だけ表示 |
 | 学習 | 学習履歴の一覧・検索・削除・すべてリセット |
