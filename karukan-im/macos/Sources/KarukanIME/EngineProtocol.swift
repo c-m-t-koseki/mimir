@@ -11,8 +11,9 @@ struct KeyResult: Decodable {
     let processKeyMs: UInt64?
     /// "kana" or "ascii"; absent from older engines.
     let mode: String?
-    /// Kana under the live conversion; absent when there is nothing to add.
-    let reading: String?
+    /// Text for the panel under an open kanji part (completions or the
+    /// reading, per `[display] part_hint`); absent when there is none.
+    let hint: String?
 }
 
 struct PreeditAttr: Decodable {

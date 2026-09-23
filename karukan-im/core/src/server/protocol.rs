@@ -143,10 +143,10 @@ pub struct KeyResult {
     /// Input mode after this request: "kana" or "ascii" (the frontend shows
     /// a badge when it changes).
     pub mode: &'static str,
-    /// Kana under the live conversion of an open kanji part, shown beside
-    /// the preedit; absent when there is nothing to add.
+    /// Text for the panel under an open kanji part (`[display] part_hint`:
+    /// completions or the reading); absent when there is nothing to show.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub reading: Option<String>,
+    pub hint: Option<String>,
 }
 
 #[derive(Debug, Serialize)]

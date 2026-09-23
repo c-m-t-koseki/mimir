@@ -94,12 +94,12 @@ class KarukanInputController: IMKInputController {
         }
         apply(actions: result.actions, client: client)
         showModeChange(result.mode, client: client)
-        showReading(result.reading, client: client)
+        showHint(result.hint, client: client)
         return result.consumed
     }
 
-    private func showReading(_ reading: String?, client: any IMKTextInput) {
-        guard let reading, !Self.candidateWindow.isVisible else {
+    private func showHint(_ hint: String?, client: any IMKTextInput) {
+        guard let hint, !Self.candidateWindow.isVisible else {
             Self.readingPanel.hide()
             return
         }
@@ -109,7 +109,7 @@ class KarukanInputController: IMKInputController {
             client.attributes(forCharacterIndex: 0, lineHeightRectangle: &lineRect)
             rect = lineRect
         }
-        Self.readingPanel.show(reading, cursorRect: rect)
+        Self.readingPanel.show(hint, cursorRect: rect)
     }
 
     private func showModeChange(_ mode: String?, client: any IMKTextInput) {
@@ -127,7 +127,7 @@ class KarukanInputController: IMKInputController {
         if let result = engineClient.processKeySync(key) {
             apply(actions: result.actions, client: client)
             showModeChange(result.mode, client: client)
-            showReading(result.reading, client: client)
+            showHint(result.hint, client: client)
         }
     }
 

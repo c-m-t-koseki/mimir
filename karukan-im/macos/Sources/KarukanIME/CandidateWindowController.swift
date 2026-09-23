@@ -312,28 +312,29 @@ class ModeBadgeController {
     }
 }
 
-/// The kana under the live conversion, set like the candidate window's
-/// header — semibold, flush left, a 2pt rule beneath — just below the
-/// preedit: 会議 in the text, かいぎ under it.
+/// The hint under an open kanji part (`[display] part_hint`): the words Tab
+/// would complete to, or the kana under the live conversion. One line of
+/// plain text on the grid — no rule, no label; it only accompanies the
+/// preedit.
 final class ReadingView: NSView {
+    static let font = NSFont.systemFont(ofSize: 13)
     var text = "" {
         didSet { needsDisplay = true }
     }
-    private let pad = Swiss.grid * 2
+    private let pad = Swiss.grid
 
     override var isFlipped: Bool { true }
 
     func fittingContentSize() -> NSSize {
-        let w = (text as NSString).size(withAttributes: [.font: Swiss.headFont]).width
-        return NSSize(width: ceil(w) + pad * 2, height: Swiss.grid * 4)
+        let w = (text as NSString).size(withAttributes: [.font: Self.font]).width
+        return NSSize(width: ceil(w) + pad * 2, height: Swiss.grid * 3)
     }
 
     override func draw(_ dirtyRect: NSRect) {
+        let h = (text as NSString).size(withAttributes: [.font: Self.font]).height
         (text as NSString).draw(
-            at: NSPoint(x: pad, y: Swiss.grid),
-            withAttributes: [.font: Swiss.headFont, .foregroundColor: NSColor.labelColor])
-        NSColor.labelColor.setFill()
-        NSRect(x: pad, y: Swiss.grid * 3, width: bounds.width - pad * 2, height: 2).fill()
+            at: NSPoint(x: pad, y: (bounds.height - h) / 2),
+            withAttributes: [.font: Self.font, .foregroundColor: NSColor.labelColor])
     }
 }
 

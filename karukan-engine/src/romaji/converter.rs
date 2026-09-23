@@ -75,6 +75,11 @@ impl RomajiConverter {
             if let Some(h) = search.output {
                 result.push_str(h);
                 buffer.drain(..search.matched_len);
+            } else if buffer == "n" {
+                // A trailing lone `n` settles as ん, as in every romaji IME:
+                // committing でざい + `n` must not need a second `n`.
+                result.push('ん');
+                buffer.clear();
             } else {
                 result.push(buffer.remove(0));
             }
@@ -336,7 +341,8 @@ mod tests {
         assert_eq!(c.flush_pending("k"), "k");
         assert_eq!(c.flush_pending("ltu"), "っ");
         assert_eq!(c.convert_flush("k"), "k");
-        assert_eq!(c.convert_flush("kan"), "かn");
+        assert_eq!(c.convert_flush("kan"), "かん");
+        assert_eq!(c.flush_pending("ny"), "ny");
     }
 
     #[test]
