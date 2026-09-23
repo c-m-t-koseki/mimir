@@ -16,8 +16,9 @@ use crate::core::part::{PartLayer, PartMode};
 use crate::core::state::InputState;
 
 use protocol::{
-    Action, CandidateItem, InitResult, KeyResult, PROTOCOL_VERSION, PreeditAttr, ProcessKeyParams,
-    Request, Response, RpcError, SelectCandidateParams, StatusResult, SurroundingTextParams,
+    Action, CandidateItem, InitResult, KeyResult, LearningEntryParams, PROTOCOL_VERSION,
+    PreeditAttr, ProcessKeyParams, Request, Response, RpcError, SelectCandidateParams,
+    SetConfigParams, StatusResult, SurroundingTextParams,
 };
 
 /// JSON-RPC dispatcher owning the engine instance.
@@ -123,6 +124,61 @@ impl ImServer {
                 let params: SurroundingTextParams = parse_params(params)?;
                 self.engine
                     .set_surrounding_text_at(&params.text, params.cursor_pos);
+                Ok(json!({}))
+            }
+            "get_config" => {
+                let settings = Settings::load_or_default();
+                Ok(json!({
+                    "part_hint": settings.display.part_hint,
+                    "predictive": settings.conversion.predictive,
+                    "model": settings.conversion.model,
+                    "light_model": settings.conversion.light_model,
+                    "learning": settings.learning.enabled,
+                    "models": settings.models.keys().collect::<Vec<_>>(),
+                    "profiles": settings.profiles,
+                }))
+            }
+            "set_config" => {
+                let params: SetConfigParams = parse_params(params)?;
+                let value = match params.value {
+                    Value::Null => None,
+                    Value::Bool(b) => Some(toml::Value::Boolean(b)),
+                    Value::String(s) => Some(toml::Value::String(s)),
+                    Value::Number(n) if n.is_i64() => {
+                        Some(toml::Value::Integer(n.as_i64().unwrap_or(0)))
+                    }
+                    other => {
+                        return Err(RpcError::new(
+                            RpcError::INVALID_PARAMS,
+                            format!("unsupported value: {other}"),
+                        ));
+                    }
+                };
+                Settings::set_value(&params.section, &params.key, value)
+                    .map_err(|e| RpcError::new(RpcError::INVALID_PARAMS, format!("{e:#}")))?;
+                Ok(json!({}))
+            }
+            "learning_list" => {
+                let entries: Vec<_> = self
+                    .engine
+                    .learning_entries()
+                    .into_iter()
+                    .map(|(reading, surface, frequency, last_access)| {
+                        json!({"reading": reading, "surface": surface,
+                               "frequency": frequency, "last_access": last_access})
+                    })
+                    .collect();
+                Ok(json!({ "entries": entries }))
+            }
+            "learning_remove" => {
+                let params: LearningEntryParams = parse_params(params)?;
+                let removed = self
+                    .engine
+                    .learning_remove(&params.reading, &params.surface);
+                Ok(json!({ "removed": removed }))
+            }
+            "learning_clear" => {
+                self.engine.learning_clear();
                 Ok(json!({}))
             }
             "save_learning" => {

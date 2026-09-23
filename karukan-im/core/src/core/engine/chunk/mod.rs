@@ -21,11 +21,6 @@ pub(super) use split::is_japanese;
 
 use super::*;
 
-/// Trailing left-context chars a learned entry must share with the
-/// current context before it overrides the model in live conversion. One
-/// char (a lone 、 or の) says too little.
-const LIVE_LEARNING_MIN_SHARED: usize = 2;
-
 impl InputMethodEngine {
     /// Auto-suggest over the composing buffer via [`Self::convert_chunks`],
     /// storing the chunks for display. Returns the concatenated conversion,
@@ -41,15 +36,13 @@ impl InputMethodEngine {
         let text: Vec<char> = full_reading.chars().collect();
         let base_ctx = self.truncate_context_for_api();
 
-        // What the user committed for this exact reading after a context
-        // like this one beats the model: the learned surface is shown live,
-        // and committing it reinforces it. No inference runs. Learning from
-        // other contexts only reorders the candidate list — the model sees
-        // the context and knows better (入力 + ちゅう is 中, whatever was
-        // last picked after 「).
+        // The phrase was committed before right after this same clause
+        // (歯が痛いので + はいしゃ → 歯医者): show that, no inference. A
+        // clause never seen with this reading (車が壊れたので + はいしゃ) is
+        // the model's call — it reads the context.
         let learned = match &self.learning {
             Some(cache) if self.input_buf.pending().is_empty() => {
-                cache.lookup_in_context(&full_reading, &base_ctx, LIVE_LEARNING_MIN_SHARED)
+                cache.lookup_after_clause(&full_reading, &base_ctx)
             }
             _ => None,
         };

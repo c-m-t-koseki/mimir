@@ -19,6 +19,12 @@ class KarukanInputController: IMKInputController {
     /// engine actions). Used to decide when to refresh surrounding text.
     private var hasPreedit = false
 
+    /// What this client was sent since the last line break or cursor jump:
+    /// the conversion context for apps that can't report the text left of
+    /// the cursor (terminals — iTerm2, Terminal, Vim inside them). One
+    /// controller per client, so each app keeps its own.
+    private var typed = TypedHistory()
+
     /// Detects the lone right-⌘ tap that returns to hiragana mode on
     /// keyboards without a JIS かな key (issue #33).
     private var rightCommandTap = RightCommandTapDetector()
@@ -95,6 +101,9 @@ class KarukanInputController: IMKInputController {
         apply(actions: result.actions, client: client)
         showModeChange(result.mode, client: client)
         showHint(result.hint, client: client)
+        if !result.consumed {
+            typed.passedThrough(key)
+        }
         return result.consumed
     }
 
@@ -129,6 +138,19 @@ class KarukanInputController: IMKInputController {
             showModeChange(result.mode, client: client)
             showHint(result.hint, client: client)
         }
+    }
+
+    // MARK: - Input menu
+
+    override func menu() -> NSMenu! {
+        let menu = NSMenu(title: "Karukan")
+        menu.addItem(
+            NSMenuItem(title: "Karukan の設定…", action: #selector(openSettings(_:)), keyEquivalent: ""))
+        return menu
+    }
+
+    @objc func openSettings(_ sender: Any?) {
+        SettingsWindowController.shared.show()
     }
 
     // MARK: - Lifecycle
@@ -200,6 +222,7 @@ class KarukanInputController: IMKInputController {
                 // with an empty UpdatePreedit, so clear the flag here or the
                 // next keystroke would skip the surrounding-text refresh.
                 hasPreedit = false
+                typed.append(text)
                 client.insertText(text, replacementRange: NSRange(location: NSNotFound, length: 0))
 
             case .updatePreedit(let text, let caret, let attributes):
@@ -242,16 +265,17 @@ class KarukanInputController: IMKInputController {
     /// views do; Electron/Chromium/terminals mostly don't), so the skip
     /// reasons are logged for dogfooding visibility.
     private func sendSurroundingText(client: any IMKTextInput) {
-        // When capture isn't possible, CLEAR the engine's context rather
-        // than skipping: leaving the context from a previous cursor
-        // position in place makes the engine condition on (and display)
-        // text that is no longer left of the cursor. No context beats a
-        // wrong one. selectedRange flakiness is per-keystroke in some
-        // apps, so this also self-heals on the next successful capture.
+        // When capture isn't possible (terminals), send what this IME typed
+        // into the client since the last line break or cursor jump
+        // (`TypedHistory`) rather than skipping: leaving the context from a
+        // previous cursor position in place would make the engine condition
+        // on text that is no longer left of the cursor. The history forgets
+        // itself on any key that may move the cursor, so it is empty rather
+        // than wrong.
         let selected = client.selectedRange()
         guard selected.location != NSNotFound, selected.location > 0 else {
-            NSLog("KarukanIME: surrounding text cleared (no usable selection)")
-            engineClient.setSurroundingTextAsync(text: "", cursorPos: 0)
+            NSLog("KarukanIME: surrounding text unavailable in \(client.bundleIdentifier() ?? "?") (no usable selection), using typed history")
+            sendTypedHistory()
             return
         }
 
@@ -265,8 +289,8 @@ class KarukanInputController: IMKInputController {
         guard let leftContext = client.string(from: range, actualRange: &actualRange),
             !leftContext.isEmpty
         else {
-            NSLog("KarukanIME: surrounding text cleared (string(from:) unavailable)")
-            engineClient.setSurroundingTextAsync(text: "", cursorPos: 0)
+            NSLog("KarukanIME: surrounding text unavailable in \(client.bundleIdentifier() ?? "?") (string(from:)), using typed history")
+            sendTypedHistory()
             return
         }
 
@@ -275,6 +299,12 @@ class KarukanInputController: IMKInputController {
             text: leftContext,
             cursorPos: leftContext.unicodeScalars.count
         )
+    }
+
+    /// Fallback context: what this IME sent the client itself.
+    private func sendTypedHistory() {
+        engineClient.setSurroundingTextAsync(
+            text: typed.text, cursorPos: typed.text.unicodeScalars.count)
     }
 
     private func setMarkedText(
@@ -335,4 +365,31 @@ func utf16Range(of scalarRange: Range<Int>, in text: String) -> NSRange? {
     let start = utf16Offset(ofScalarOffset: scalarRange.lowerBound, in: text)
     let end = utf16Offset(ofScalarOffset: scalarRange.upperBound, in: text)
     return NSRange(location: start, length: end - start)
+}
+
+/// Text recently sent to a client, kept as a stand-in for the surrounding
+/// text a terminal can't report. Anything that may move the cursor or start
+/// a new line (Return, Escape, arrows, Ctrl chords) forgets it: a wrong
+/// context is worse than none.
+struct TypedHistory {
+    private static let limit = 40
+    private(set) var text = ""
+
+    mutating func append(_ s: String) {
+        text = String((text + s).suffix(Self.limit))
+    }
+
+    /// A key the engine let through to the application.
+    mutating func passedThrough(_ key: EngineKeyEvent) {
+        let m = key.modifiers
+        if key.keysym == 0xff08 {  // BackSpace
+            text = String(text.dropLast())
+        } else if (0x20...0x7e).contains(key.keysym), !m.control, !m.alt, !m.superKey,
+            let scalar = UnicodeScalar(key.keysym)
+        {
+            append(String(Character(scalar)))
+        } else {
+            text = ""
+        }
+    }
 }
