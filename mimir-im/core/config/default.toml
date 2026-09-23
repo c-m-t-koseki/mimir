@@ -101,6 +101,9 @@ candidate_layout = "vertical"
 reading_display = "tail"
 tail_chars = 1
 tail_delay_ms = 250
+# 削除（Backspace）のあとに手を止めてから変換するまで。漢字の読みを削った
+# ときだけ平仮名で見せ、漢字にかからない削除（規定で → 規定）は漢字のまま
+tail_delete_delay_ms = 600
 
 # どのキーがどの記号を入力するか。幅（半角・全角）は [width] が決める。
 [symbol]

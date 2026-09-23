@@ -184,6 +184,8 @@ pub struct DisplaySettings {
     /// `reading_display = "tail"`: the pause, in milliseconds, after which
     /// the tail converts too
     pub tail_delay_ms: u64,
+    /// The same pause after a deletion, longer: deleting goes on in bursts
+    pub tail_delete_delay_ms: u64,
 }
 
 /// Candidates one per row, or each where its select key is on the
