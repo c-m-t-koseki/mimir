@@ -1,0 +1,33 @@
+[package]
+name = "mimir-tsf"
+version = "0.1.0"
+edition.workspace = true
+description = "TSF text input processor for the Mimir Japanese IME (Windows)"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[lib]
+name = "mimir_tsf"
+# cdylib: the TSF DLL; rlib: the portable parts' tests.
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+windows-core = "0.62"
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_Globalization",
+    "Win32_System_Com",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Ole",
+    "Win32_System_Registry",
+    "Win32_System_SystemServices",
+    "Win32_Security",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_TextServices",
+    "Win32_UI_WindowsAndMessaging",
+] }
