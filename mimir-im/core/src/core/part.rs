@@ -27,7 +27,7 @@
 
 use super::engine::{EngineAction, EngineResult, InputMethodEngine};
 use super::keycode::{KeyEvent, KeyModifiers, Keysym};
-use super::preedit::{Preedit, PreeditAttribute};
+use super::preedit::{AttributeType, Preedit, PreeditAttribute};
 use super::state::InputState;
 use crate::config::Settings;
 use crate::config::settings::PartHint;
@@ -851,21 +851,23 @@ fn composing(engine: &InputMethodEngine) -> bool {
 }
 
 /// The reading held right of the caret, shown after the converted left
-/// side (the caret stays at the boundary).
+/// side. The left side, what converts, is highlighted (a thick underline)
+/// and the rest gets a plain one: many applications (Chromium, terminals)
+/// draw the caret at the end of the preedit whatever it is told, so the
+/// boundary must show without it. The caret is still put there.
 fn show_split(tail: &str, result: &mut EngineResult) {
     for action in &mut result.actions {
         if let EngineAction::UpdatePreedit(preedit) = action
             && !preedit.is_empty()
         {
+            let head = preedit.text().chars().count();
             let mut shown = Preedit::with_text(format!("{}{tail}", preedit.text()));
-            shown.set_caret(preedit.caret());
+            shown.set_caret(head);
             let end = shown.text().chars().count();
-            let mut attributes = preedit.attributes().to_vec();
-            attributes.push(PreeditAttribute::underline(
-                preedit.text().chars().count(),
-                end,
-            ));
-            shown.set_attributes(attributes);
+            shown.set_attributes(vec![
+                PreeditAttribute::new(0, head, AttributeType::Highlight),
+                PreeditAttribute::underline(head, end),
+            ]);
             *preedit = shown;
         }
     }
