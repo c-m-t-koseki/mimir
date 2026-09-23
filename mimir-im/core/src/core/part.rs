@@ -1799,6 +1799,23 @@ mod tests {
     }
 
     #[test]
+    fn commits_complete_later_input_without_being_learned() {
+        let (mut layer, mut engine) = setup();
+        engine_learning_on(&mut engine);
+        // Committed as shown (no model: カイギ is picked by q, which learns).
+        feed(&mut layer, &mut engine, "Kaigishitsuq");
+        // A part committed as shown goes to the history only.
+        feed(&mut layer, &mut engine, "Nyuuryoku");
+        layer.process_key(&mut engine, &ctrl('n'));
+        feed(&mut layer, &mut engine, "k");
+        feed(&mut layer, &mut engine, "Kai");
+        assert_eq!(engine.completions(3), vec!["カイギシツ".to_string()]);
+        // Tab opens them as candidates.
+        layer.process_key(&mut engine, &press(Keysym::TAB));
+        assert!(matches!(engine.state(), InputState::Conversion { .. }));
+    }
+
+    #[test]
     fn punctuation_ends_what_a_one_char_part_joins() {
         let (mut layer, mut engine) = setup();
         engine_learning_on(&mut engine);

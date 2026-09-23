@@ -745,6 +745,9 @@ impl InputMethodEngine {
     /// Record the committed conversion in the learning cache — when it is
     /// not what the window opened on — and end the composition.
     pub(super) fn finish_conversion(&mut self, text: &str, reading: &Option<String>) {
+        if let Some(reading) = reading {
+            self.record_history(reading, text);
+        }
         if let Some(reading) = reading
             && text != self.conversion_origin
         {

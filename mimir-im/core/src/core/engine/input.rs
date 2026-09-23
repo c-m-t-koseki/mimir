@@ -386,7 +386,7 @@ impl InputMethodEngine {
 
     /// Commit the current composition (Enter).
     pub(super) fn commit_composing(&mut self) -> EngineResult {
-        let (_, text) = self.resolve_composing_commit();
+        let (reading, text) = self.resolve_composing_commit();
 
         if text.is_empty() {
             self.end_composition();
@@ -396,7 +396,8 @@ impl InputMethodEngine {
         }
 
         // The composition as shown is the model's own answer: nothing to
-        // learn.
+        // learn, but it completes later input.
+        self.record_history(&reading, &text);
         self.end_composition();
 
         // HideCandidates is required here: the auto-suggest/live-conversion

@@ -121,6 +121,10 @@ pub struct InputMethodEngine {
     /// conversion's) own answer. Committing it teaches nothing — the model
     /// gives it again — so only a different pick is learned.
     conversion_origin: String,
+    /// Everything committed as a conversion, picked or not: what Tab
+    /// completes from. Kept apart from `learning`, which only holds picks
+    /// and steers the conversion itself.
+    pub(super) history: Option<LearningCache>,
     /// The last pick learned, `(reading, surface)`, for the part layer
     /// (it learns a one-char pick joined to what came before).
     chosen: Option<(String, String)>,
@@ -181,6 +185,7 @@ impl InputMethodEngine {
             },
             surrounding_context: None,
             conversion_origin: String::new(),
+            history: None,
             chosen: None,
             config: EngineConfig::default(),
             metrics: ConversionMetrics::default(),
@@ -336,18 +341,40 @@ impl InputMethodEngine {
             return Vec::new();
         }
         let base = self.input_buf.settled_reading(&self.converters.romaji);
-        self.lookup_learning_history(&base, "")
+        self.history_completions(&base)
             .into_iter()
-            // Longer readings only, and actual conversions: a kana phrase
-            // committed as typed completes to nothing worth a hint.
-            .filter(|c| {
-                c.reading
-                    .as_deref()
-                    .is_some_and(|r| r != base && r != c.text)
-            })
             .map(|c| c.text)
             .take(limit)
             .collect()
+    }
+
+    /// Earlier commits whose reading extends `base` — longer readings only,
+    /// and actual conversions (a kana phrase committed as typed completes
+    /// to nothing worth offering) — most used first.
+    fn history_completions(&self, base: &str) -> Vec<Candidate> {
+        let Some(history) = &self.history else {
+            return Vec::new();
+        };
+        history
+            .prefix_lookup(base)
+            .into_iter()
+            .filter(|(reading, surface, _)| reading != base && reading != surface)
+            .map(|(reading, surface, _)| Candidate {
+                text: surface,
+                reading: Some(reading),
+                source: Some(CandidateSource::Learning),
+                description: None,
+            })
+            .collect()
+    }
+
+    /// Note a committed conversion in the completion history.
+    pub(super) fn record_history(&mut self, reading: &str, surface: &str) {
+        if reading != surface
+            && let Some(history) = &mut self.history
+        {
+            history.record(reading, surface);
+        }
     }
 
     /// Tab / Ctrl+I in a part: complete the reading from what was committed
@@ -358,10 +385,12 @@ impl InputMethodEngine {
             return EngineResult::consumed();
         }
         let base = self.input_buf.settled_reading(&self.converters.romaji);
-        if self.lookup_learning_history(&base, "").is_empty() {
+        let candidates = self.history_completions(&base);
+        if candidates.is_empty() {
             return EngineResult::consumed();
         }
-        self.jump_to_source(CandidateSource::Learning)
+        let list = self.settle_candidates(candidates);
+        self.enter_conversion_state(&base, list)
     }
 
     /// End the composition without committing, returning its kana reading
@@ -416,6 +445,7 @@ impl InputMethodEngine {
     }
 
     pub fn learn(&mut self, reading: &str, surface: &str) {
+        self.record_history(reading, surface);
         self.record_learning(reading, surface);
     }
 
@@ -434,10 +464,12 @@ impl InputMethodEngine {
 
     #[cfg(test)]
     pub fn enable_learning_for_test(&mut self) {
-        self.learning = Some(LearningCache::new(LearningConfig {
+        let config = LearningConfig {
             min_surface_chars: 2,
             ..Default::default()
-        }));
+        };
+        self.learning = Some(LearningCache::new(config.clone()));
+        self.history = Some(LearningCache::new(config));
     }
 
     /// What committing the composition would produce, `(reading, text)`,
@@ -448,7 +480,8 @@ impl InputMethodEngine {
 
     /// Commit the composition like [`Self::commit_result`], learning nothing.
     pub fn commit_unlearned_result(&mut self) -> EngineResult {
-        let (_, text) = self.resolve_composing_commit();
+        let (reading, text) = self.resolve_composing_commit();
+        self.record_history(&reading, &text);
         self.end_composition();
         self.surrounding_context = None;
         let action = if text.is_empty() {
@@ -869,7 +902,8 @@ impl InputMethodEngine {
             // The composition as shown is the model's own answer: nothing
             // to learn.
             InputState::Composing { .. } => {
-                let (_, text) = self.resolve_composing_commit();
+                let (reading, text) = self.resolve_composing_commit();
+                self.record_history(&reading, &text);
                 self.end_composition();
                 text
             }
@@ -933,14 +967,19 @@ impl InputMethodEngine {
 
     /// Save the learning cache to disk if it has unsaved changes.
     pub fn save_learning(&mut self) {
-        if let Some(cache) = &mut self.learning
-            && cache.is_dirty()
-            && let Some(path) = Settings::learning_file()
-        {
-            if let Err(e) = cache.save(&path) {
-                debug!("Failed to save learning cache: {}", e);
-            } else {
-                debug!("Learning cache saved to {:?}", path);
+        for (cache, path) in [
+            (&mut self.learning, Settings::learning_file()),
+            (&mut self.history, Settings::history_file()),
+        ] {
+            if let Some(cache) = cache
+                && cache.is_dirty()
+                && let Some(path) = path
+            {
+                if let Err(e) = cache.save(&path) {
+                    debug!("Failed to save {:?}: {}", path, e);
+                } else {
+                    debug!("Saved {:?}", path);
+                }
             }
         }
     }

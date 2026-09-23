@@ -209,6 +209,12 @@ impl InputMethodEngine {
     /// entries already on disk are loaded regardless (they can be removed
     /// with Ctrl+Delete or by eviction).
     pub fn init_learning_cache(&mut self, enabled: bool, config: LearningConfig) {
+        if self.history.is_none() {
+            let history = Settings::history_file()
+                .filter(|path| path.exists())
+                .and_then(|path| LearningCache::load(&path, config.clone()).ok());
+            self.history = Some(history.unwrap_or_else(|| LearningCache::new(config.clone())));
+        }
         if !enabled || self.learning.is_some() {
             return;
         }
