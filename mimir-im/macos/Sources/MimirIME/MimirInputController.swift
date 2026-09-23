@@ -130,7 +130,7 @@ class MimirInputController: IMKInputController {
     static let japaneseModeID = "dev.tkoseki.inputmethod.Mimir.Japanese"
     static let romanModeID = "dev.tkoseki.inputmethod.Mimir.Roman"
 
-    /// The engine switched modes: move the menu bar icon (か / A) to the
+    /// The engine switched modes: move the menu bar icon (あ / A) to the
     /// matching input mode, and show the badge. macOS shows its own indicator
     /// only when it switched the mode itself (`badge: false`); our
     /// `selectMode` gets none.
