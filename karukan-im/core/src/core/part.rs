@@ -88,6 +88,7 @@ impl PartLayer {
     }
 
     pub fn process_key(&mut self, engine: &mut InputMethodEngine, key: &KeyEvent) -> EngineResult {
+        let key = &emacs_alias(key);
         if self.register.is_some() && key.is_press && !key.keysym.is_modifier() {
             return self.registration_key(engine, key);
         }
@@ -217,6 +218,14 @@ impl PartLayer {
             return result;
         }
         if let Some(first) = part_opener(key, ch) {
+            // A capital in the middle of a syllable (`s` + `E`) is SandS
+            // rolling over — Space still held when the next key lands — not
+            // a new part: nothing ever ends a part on an unfired consonant.
+            if engine.has_pending_romaji()
+                && let Some(ch) = first
+            {
+                return engine.process_key(&press_char(ch));
+            }
             return self.start_part(engine, first);
         }
         if ch == 'l' {
@@ -405,6 +414,23 @@ fn save_registered(reading: &str, word: &str) {
     }
 }
 
+/// Ctrl+H is Backspace and Ctrl+M is Enter, as in SKK and the Cocoa text
+/// system. Unmapped, the engine would pass Ctrl+H to the application, which
+/// deletes inside the marked text behind the engine's back — the next
+/// keystroke then redraws the preedit and the deleted chars come back.
+fn emacs_alias(key: &KeyEvent) -> KeyEvent {
+    let m = key.modifiers;
+    if !m.control_key || m.alt_key || m.super_key {
+        return key.clone();
+    }
+    let keysym = match key.keysym.0 {
+        0x68 | 0x48 => Keysym::BACKSPACE,
+        0x6d | 0x4d => Keysym::RETURN,
+        _ => return key.clone(),
+    };
+    KeyEvent::new(keysym, KeyModifiers::default(), key.is_press)
+}
+
 /// The printable character a key types, ignoring Ctrl chords.
 fn typed_char(key: &KeyEvent) -> Option<char> {
     if key.modifiers.control_key {
@@ -540,6 +566,39 @@ mod tests {
             enter.actions.as_slice(),
             [EngineAction::Commit(word)] if word == "karukanいめ"
         ));
+    }
+
+    fn ctrl(ch: char) -> KeyEvent {
+        KeyEvent::new(
+            Keysym(ch as u32),
+            KeyModifiers {
+                control_key: true,
+                ..Default::default()
+            },
+            true,
+        )
+    }
+
+    #[test]
+    fn sands_rollover_capital_continues_the_syllable() {
+        let (mut layer, mut engine) = setup();
+        // Space+s, then `e` while Space is still down: `SE`, meant `Se`.
+        assert_eq!(feed(&mut layer, &mut engine, "SE"), "");
+        assert_eq!(engine.preedit().unwrap().text(), "せ");
+        // A capital after a whole kana still opens the next part.
+        assert_eq!(feed(&mut layer, &mut engine, "Ki "), "せき");
+    }
+
+    #[test]
+    fn ctrl_h_deletes_inside_the_part() {
+        let (mut layer, mut engine) = setup();
+        feed(&mut layer, &mut engine, "Kaigi");
+        let result = layer.process_key(&mut engine, &ctrl('h'));
+        assert!(result.consumed);
+        assert_eq!(engine.preedit().unwrap().text(), "かい");
+        // Plain mode with nothing composing leaves Ctrl+H to the app.
+        feed(&mut layer, &mut engine, " ");
+        assert!(!layer.process_key(&mut engine, &ctrl('h')).consumed);
     }
 
     #[test]
