@@ -127,8 +127,8 @@ class KarukanInputController: IMKInputController {
         Self.readingPanel.show(hint, cursorRect: rect)
     }
 
-    static let japaneseModeID = "dev.togatoga.inputmethod.Karukan.Japanese"
-    static let romanModeID = "dev.togatoga.inputmethod.Karukan.Roman"
+    static let japaneseModeID = "dev.tkoseki.inputmethod.Mimir.Japanese"
+    static let romanModeID = "dev.tkoseki.inputmethod.Mimir.Roman"
 
     /// The engine switched modes: move the menu bar icon (か / A) to the
     /// matching input mode, and show the badge. macOS shows its own indicator
@@ -181,9 +181,9 @@ class KarukanInputController: IMKInputController {
     // MARK: - Input menu
 
     override func menu() -> NSMenu! {
-        let menu = NSMenu(title: "Karukan")
+        let menu = NSMenu(title: "Mimir")
         menu.addItem(
-            NSMenuItem(title: "Karukan の設定…", action: #selector(openSettings(_:)), keyEquivalent: ""))
+            NSMenuItem(title: "Mimir の設定…", action: #selector(openSettings(_:)), keyEquivalent: ""))
         return menu
     }
 

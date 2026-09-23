@@ -490,7 +490,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     private lazy var window: NSWindow = {
         let window = NSWindow(
             contentViewController: NSHostingController(rootView: SettingsView(model: model)))
-        window.title = "Karukan 設定"
+        window.title = "Mimir 設定"
         window.styleMask = [.titled, .closable]
         window.isReleasedWhenClosed = false
         window.delegate = self

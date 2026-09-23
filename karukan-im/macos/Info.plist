@@ -7,15 +7,15 @@
     <key>CFBundleExecutable</key>
     <string>KarukanIME</string>
     <key>CFBundleDisplayName</key>
-    <string>Karukan</string>
+    <string>Mimir</string>
     <key>CFBundleName</key>
-    <string>Karukan</string>
+    <string>Mimir</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
     <key>CFBundleIdentifier</key>
-    <string>dev.togatoga.inputmethod.Karukan</string>
+    <string>dev.tkoseki.inputmethod.Mimir</string>
     <key>CFBundleIconFile</key>
     <string>karukan.icns</string>
     <key>CFBundleShortVersionString</key>
@@ -29,7 +29,7 @@
     <true/>
 
     <key>InputMethodConnectionName</key>
-    <string>dev.togatoga.inputmethod.Karukan_Connection</string>
+    <string>dev.tkoseki.inputmethod.Mimir_Connection</string>
     <key>InputMethodServerControllerClass</key>
     <string>KarukanInputController</string>
 
@@ -45,10 +45,10 @@
       <key>tsInputModeListKey</key>
       <dict>
 
-        <key>dev.togatoga.inputmethod.Karukan.Japanese</key>
+        <key>dev.tkoseki.inputmethod.Mimir.Japanese</key>
         <dict>
           <key>TISInputSourceID</key>
-          <string>dev.togatoga.inputmethod.Karukan.Japanese</string>
+          <string>dev.tkoseki.inputmethod.Mimir.Japanese</string>
           <key>TISIntendedLanguage</key>
           <string>ja</string>
           <key>tsInputModeScriptKey</key>
@@ -67,16 +67,16 @@
           <string>karukan.tiff</string>
         </dict>
 
-        <!-- Karukan's own direct-ASCII mode (英数 / `l`). Registered so the
+        <!-- Mimir's own direct-ASCII mode (英数 / `l`). Registered so the
              menu bar icon can show it: the frontend selects this mode when
              the engine goes ASCII and the Japanese one when it comes back.
              JISKeyboardShortcutKey 2 makes the JIS 英数 key select this mode
              (1 = かな selects Japanese) instead of the OS English source, and
              the intended language ja lists it under 日本語. -->
-        <key>dev.togatoga.inputmethod.Karukan.Roman</key>
+        <key>dev.tkoseki.inputmethod.Mimir.Roman</key>
         <dict>
           <key>TISInputSourceID</key>
-          <string>dev.togatoga.inputmethod.Karukan.Roman</string>
+          <string>dev.tkoseki.inputmethod.Mimir.Roman</string>
           <key>TISIntendedLanguage</key>
           <string>ja</string>
           <key>tsInputModeScriptKey</key>
@@ -99,8 +99,8 @@
 
       <key>tsVisibleInputModeOrderedArrayKey</key>
       <array>
-        <string>dev.togatoga.inputmethod.Karukan.Japanese</string>
-        <string>dev.togatoga.inputmethod.Karukan.Roman</string>
+        <string>dev.tkoseki.inputmethod.Mimir.Japanese</string>
+        <string>dev.tkoseki.inputmethod.Mimir.Roman</string>
       </array>
     </dict>
 

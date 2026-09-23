@@ -1,3 +1,3 @@
 /* The input menu header looks up the IME name under this key in the main
    strings table; without it the menu shows the raw key "CFBundleName". */
-"CFBundleName" = "Karukan";
+"CFBundleName" = "Mimir";
