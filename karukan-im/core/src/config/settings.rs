@@ -35,6 +35,19 @@ pub struct Settings {
     pub date: DateConfig,
     /// Conversion models, keyed by the name `model` / `light_model` refer to
     pub models: BTreeMap<String, ModelDef>,
+    /// Named model combinations (`[profiles.<name>]`) the settings window
+    /// switches between; applying one copies it into `[conversion]`.
+    #[serde(default)]
+    pub profiles: BTreeMap<String, Profile>,
+}
+
+/// One `[profiles.<name>]` entry. Fields default to empty so the settings
+/// window can write (and remove) them one key at a time.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct Profile {
+    pub model: String,
+    pub light_model: String,
 }
 
 /// One `[models]` entry as written: a string (the path of a local GGUF,
@@ -228,6 +241,8 @@ pub struct LearningSettings {
     /// cache; longer conversion results (e.g. whole live-converted
     /// sentences) are not learned
     pub max_surface_chars: usize,
+    /// Minimum surface length recorded (2 skips lone て / 中)
+    pub min_surface_chars: usize,
 }
 
 impl Default for Settings {
@@ -252,6 +267,16 @@ fn merge_toml(base: &mut toml::Value, overlay: &toml::Value) {
             *base = overlay.clone();
         }
     }
+}
+
+/// Drop tables left empty (a removed profile's `[profiles.x]`).
+fn prune_empty_tables(table: &mut toml::Table) {
+    for (_, value) in table.iter_mut() {
+        if let Some(inner) = value.as_table_mut() {
+            prune_empty_tables(inner);
+        }
+    }
+    table.retain(|_, v| v.as_table().is_none_or(|t| !t.is_empty()));
 }
 
 /// Parse user TOML content merged on top of default.toml.
@@ -358,6 +383,58 @@ impl Settings {
             }
         }
         Ok(settings)
+    }
+
+    /// Set one `[section] key = value` in the user's config file, keeping
+    /// every other entry (comments are not kept: the file is rewritten from
+    /// its parsed table). The result must still load, or the file is left
+    /// as it was and the error returned.
+    pub fn set_value(section: &str, key: &str, value: Option<toml::Value>) -> Result<()> {
+        let Some(path) = Self::config_file() else {
+            anyhow::bail!("Could not determine config directory");
+        };
+        Self::set_value_in(&path, section, key, value)
+    }
+
+    /// `section` may be dotted (`profiles.fast`); a `None` value removes the
+    /// key (and a section left empty by it).
+    pub fn set_value_in(
+        path: &Path,
+        section: &str,
+        key: &str,
+        value: impl Into<Option<toml::Value>>,
+    ) -> Result<()> {
+        let before = fs::read_to_string(path).unwrap_or_default();
+        let mut table: toml::Table = before.parse()?;
+        let mut section_table = &mut table;
+        for part in section.split('.') {
+            let entry = section_table
+                .entry(part)
+                .or_insert_with(|| toml::Value::Table(toml::Table::new()));
+            let Some(inner) = entry.as_table_mut() else {
+                anyhow::bail!("[{section}] is not a table");
+            };
+            section_table = inner;
+        }
+        match value.into() {
+            Some(value) => {
+                section_table.insert(key.to_string(), value);
+            }
+            None => {
+                section_table.remove(key);
+            }
+        }
+        prune_empty_tables(&mut table);
+        let after = toml::to_string(&table)?;
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(path, &after)?;
+        if let Err(e) = Self::load_from(path) {
+            fs::write(path, before)?;
+            return Err(e.context(format!("[{section}] {key} rejected")));
+        }
+        Ok(())
     }
 
     /// Save settings to the default configuration file
@@ -757,5 +834,52 @@ strategy = "main"
         let path = file.path().to_path_buf();
         let settings = Settings::load_from(&path).unwrap();
         assert_eq!(settings.conversion.strategy, StrategyMode::Main);
+    }
+
+    #[test]
+    fn test_set_value_keeps_other_entries_and_rejects_bad_values() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, "[display]\ncandidate_window = \"conversion\"\n").unwrap();
+
+        Settings::set_value_in(&path, "display", "part_hint", toml::Value::from("reading"))
+            .unwrap();
+        let settings = Settings::load_from(&path).unwrap();
+        assert_eq!(settings.display.part_hint, PartHint::Reading);
+        assert_eq!(
+            settings.display.candidate_window,
+            CandidateWindow::Conversion
+        );
+
+        assert!(
+            Settings::set_value_in(&path, "display", "part_hint", toml::Value::from("bogus"))
+                .is_err()
+        );
+        let settings = Settings::load_from(&path).unwrap();
+        assert_eq!(settings.display.part_hint, PartHint::Reading);
+    }
+
+    #[test]
+    fn test_profiles_are_written_and_removed() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let set = |key: &str, value: Option<&str>| {
+            Settings::set_value_in(
+                &path,
+                "profiles.速さ重視",
+                key,
+                value.map(toml::Value::from),
+            )
+            .unwrap()
+        };
+        set("model", Some("jinen-v2-xsmall-q5"));
+        set("light_model", Some("jinen-v2-xsmall-q5"));
+        let settings = Settings::load_from(&path).unwrap();
+        assert_eq!(settings.profiles["速さ重視"].model, "jinen-v2-xsmall-q5");
+
+        set("model", None);
+        set("light_model", None);
+        assert!(Settings::load_from(&path).unwrap().profiles.is_empty());
+        assert!(!std::fs::read_to_string(&path).unwrap().contains("profiles"));
     }
 }

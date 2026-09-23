@@ -149,6 +149,22 @@ pub struct KeyResult {
     pub hint: Option<String>,
 }
 
+/// `set_config`: write `[section] key = value` into config.toml. Takes
+/// effect when the engine restarts.
+#[derive(Debug, Deserialize)]
+pub struct SetConfigParams {
+    pub section: String,
+    pub key: String,
+    pub value: serde_json::Value,
+}
+
+/// `learning_remove`: forget one learned conversion.
+#[derive(Debug, Deserialize)]
+pub struct LearningEntryParams {
+    pub reading: String,
+    pub surface: String,
+}
+
 #[derive(Debug, Serialize)]
 pub struct StatusResult {
     pub initialized: bool,
