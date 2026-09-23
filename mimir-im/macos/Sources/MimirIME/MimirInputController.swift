@@ -12,6 +12,7 @@ class MimirInputController: IMKInputController {
     static let candidateWindow = CandidateWindowController()
     static let modeBadge = ModeBadgeController()
     static let readingPanel = ReadingPanelController()
+    static let rubyPanel = RubyPanelController()
     /// Last input mode the engine reported; a change shows the badge.
     static var lastMode = "kana"
 
@@ -24,6 +25,10 @@ class MimirInputController: IMKInputController {
     /// the cursor (terminals — iTerm2, Terminal, Vim inside them). One
     /// controller per client, so each app keeps its own.
     private var typed = TypedHistory()
+    /// The marked text last set, for the ruby's offsets.
+    private var markedText = ""
+    /// `refresh` scheduled after a pause in typing.
+    private var refreshWork: DispatchWorkItem?
 
     /// Detects the lone right-⌘ tap that returns to hiragana mode on
     /// keyboards without a JIS かな key (issue #33).
@@ -107,12 +112,51 @@ class MimirInputController: IMKInputController {
         Self.candidateWindow.showsKeys = result.selectKeys ?? true
         Self.candidateWindow.layout = result.candidateLayout ?? "vertical"
         apply(actions: result.actions, client: client)
+        showRuby(result.ruby, client: client)
+        scheduleRefresh(after: result.refreshMs, client: client)
         showModeChange(result.mode, client: client)
         showHint(result.hint, client: client)
         if !result.consumed {
             typed.passedThrough(key)
         }
         return result.consumed
+    }
+
+    /// Furigana over the preedit's last kanji run.
+    private func showRuby(_ ruby: Ruby?, client: any IMKTextInput) {
+        guard let ruby, hasPreedit, !Self.candidateWindow.isVisible else {
+            Self.rubyPanel.hide()
+            return
+        }
+        var start = NSRect.zero
+        client.attributes(
+            forCharacterIndex: utf16Offset(ofScalarOffset: ruby.start, in: markedText),
+            lineHeightRectangle: &start)
+        var end = NSRect.zero
+        client.attributes(
+            forCharacterIndex: utf16Offset(ofScalarOffset: ruby.end, in: markedText),
+            lineHeightRectangle: &end)
+        guard start != .zero else {
+            Self.rubyPanel.hide()
+            return
+        }
+        // A run ending the preedit has no char after it to ask about.
+        let endX = abs(end.minY - start.minY) < 1 && end.minX > start.minX ? end.minX : 0
+        Self.rubyPanel.show(ruby.text, start: start, endX: endX)
+    }
+
+    /// After a pause in typing, ask for the preedit with nothing held back.
+    private func scheduleRefresh(after ms: Int?, client: any IMKTextInput) {
+        refreshWork?.cancel()
+        refreshWork = nil
+        guard let ms else { return }
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, let result = engineClient.refreshSync() else { return }
+            self.apply(actions: result.actions, client: client)
+            self.showRuby(result.ruby, client: client)
+        }
+        refreshWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(ms), execute: work)
     }
 
     private func showHint(_ hint: String?, client: any IMKTextInput) {
@@ -230,6 +274,9 @@ class MimirInputController: IMKInputController {
     /// actions it emits (clear preedit, hide candidates/aux).
     private func flushComposition(client: any IMKTextInput) {
         Self.readingPanel.hide()
+        Self.rubyPanel.hide()
+        refreshWork?.cancel()
+        refreshWork = nil
         if let result = engineClient.commitSync() {
             apply(actions: result.actions, client: client)
         } else {
@@ -270,11 +317,13 @@ class MimirInputController: IMKInputController {
                 // with an empty UpdatePreedit, so clear the flag here or the
                 // next keystroke would skip the surrounding-text refresh.
                 hasPreedit = false
+                markedText = ""
                 typed.append(text)
                 client.insertText(text, replacementRange: NSRange(location: NSNotFound, length: 0))
 
             case .updatePreedit(let text, let caret, let attributes):
                 hasPreedit = !text.isEmpty
+                markedText = text
                 setMarkedText(text: text, caret: caret, attributes: attributes, client: client)
 
             case .showCandidates(let candidates, let cursor, let page, let totalPages):

@@ -9,6 +9,8 @@ import SwiftUI
 final class SettingsModel: ObservableObject {
     @Published var partHint = "completion"
     @Published var candidateLayout = "vertical"
+    @Published var readingDisplay = "ruby"
+    @Published var tailChars = 2
     @Published var predictive = false
     @Published var skkStyle = false
     @Published var model = ""
@@ -33,6 +35,8 @@ final class SettingsModel: ObservableObject {
         }
         partHint = config["part_hint"] as? String ?? partHint
         candidateLayout = config["candidate_layout"] as? String ?? candidateLayout
+        readingDisplay = config["reading_display"] as? String ?? readingDisplay
+        tailChars = config["tail_chars"] as? Int ?? tailChars
         predictive = config["predictive"] as? Bool ?? predictive
         skkStyle = config["skk_style"] as? Bool ?? skkStyle
         model = config["model"] as? String ?? model
@@ -44,6 +48,7 @@ final class SettingsModel: ObservableObject {
         profiles = rawProfiles.mapValues { ($0["model"] ?? "", $0["light_model"] ?? "") }
         saved = [
             "display.part_hint": partHint, "display.candidate_layout": candidateLayout,
+            "display.reading_display": readingDisplay, "display.tail_chars": "\(tailChars)",
             "conversion.predictive": "\(predictive)",
             "conversion.skk_style": "\(skkStyle)",
             "conversion.model": model, "conversion.light_model": lightModel,
@@ -280,11 +285,23 @@ struct GeneralTab: View {
         Form {
             Toggle("SKK 式の入力（大文字で漢字の変換を始め、小文字は平仮名で確定）", isOn: $model.skkStyle)
                 .onChange(of: model.skkStyle) { model.set("conversion", "skk_style", $0) }
-            Picker("変換中の補助表示", selection: $model.partHint) {
-                Text("補完候補").tag("completion")
-                Text("読み").tag("reading")
+            Picker("変換中の読み", selection: $model.readingDisplay) {
+                Text("ふりがな（最後の漢字の上）").tag("ruby")
+                Text("末尾を平仮名で残す").tag("tail")
+                Text("読みを添える（天気〈てんき〉）").tag("inline")
                 Text("表示しない").tag("none")
             }
+            .onChange(of: model.readingDisplay) { model.set("display", "reading_display", $0) }
+            if model.readingDisplay == "tail" {
+                Stepper("平仮名で残す文字数: \(model.tailChars)", value: $model.tailChars, in: 1...6)
+                    .onChange(of: model.tailChars) { model.set("display", "tail_chars", $0) }
+            }
+            Toggle(
+                "補完候補を表示する（Tab で補完）",
+                isOn: Binding(
+                    get: { model.partHint == "completion" },
+                    set: { model.partHint = $0 ? "completion" : "none" })
+            )
             .onChange(of: model.partHint) { model.set("display", "part_hint", $0) }
             Picker("候補窓の並び", selection: $model.candidateLayout) {
                 Text("縦に一列").tag("vertical")
