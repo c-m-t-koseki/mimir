@@ -92,8 +92,34 @@ impl PartLayer {
         if self.register.is_some() && key.is_press && !key.keysym.is_modifier() {
             return self.registration_key(engine, key);
         }
+        let composing = !matches!(engine.state(), InputState::Empty);
+        let ctrl = key.is_press && key.modifiers.control_key && !key.modifiers.alt_key;
+        if composing && ctrl && matches!(key.keysym, Keysym::KEY_U | Keysym::KEY_U_UPPER) {
+            return self.discard(engine);
+        }
         let result = self.dispatch(engine, key);
-        plain_aux(engine, result)
+        let mut result = plain_aux(engine, result);
+        // A Ctrl chord the engine leaves unbound must not reach the
+        // application mid-composition: its text edit (Ctrl+K, Ctrl+W, …)
+        // would act on the marked text behind the engine's back, and the
+        // next keystroke would redraw what it deleted.
+        if composing && ctrl && self.mode != PartMode::Ascii {
+            result.consumed = true;
+        }
+        result
+    }
+
+    /// Ctrl+U: drop what is being composed (readline's kill-line), part
+    /// and all, back to plain kana.
+    fn discard(&mut self, engine: &mut InputMethodEngine) -> EngineResult {
+        engine.take_reading();
+        if self.mode == PartMode::Part {
+            self.enter(engine, PartMode::Plain);
+        }
+        EngineResult::consumed()
+            .with_action(EngineAction::UpdatePreedit(Preedit::new()))
+            .with_action(EngineAction::HideCandidates)
+            .with_action(EngineAction::HideAuxText)
     }
 
     /// The kana under the live conversion, for the frontend to show beside
@@ -121,6 +147,8 @@ impl PartLayer {
         if ctrl_j || key.keysym.is_mode_toggle_key() {
             let result = self.close(engine);
             self.enter(engine, PartMode::Plain);
+            // Also leave the engine's own katakana mode (Ctrl+K).
+            engine.process_key(&press(Keysym::SUPER_R));
             return merge(EngineResult::consumed(), result);
         }
 
@@ -654,6 +682,22 @@ mod tests {
         // No model: the preedit is the kana itself, nothing to show beside it.
         layer.process_key(&mut engine, &ctrl('g'));
         assert_eq!(layer.live_reading(&engine), None);
+    }
+
+    #[test]
+    fn ctrl_u_discards_the_composition() {
+        let (mut layer, mut engine) = setup();
+        feed(&mut layer, &mut engine, "Kaigi");
+        let result = layer.process_key(&mut engine, &ctrl('u'));
+        assert!(result.consumed);
+        assert!(matches!(engine.state(), InputState::Empty));
+        assert_eq!(layer.mode(), PartMode::Plain);
+        // Nothing composing: Ctrl+U is the application's again.
+        assert!(!layer.process_key(&mut engine, &ctrl('u')).consumed);
+        // Other unbound chords are swallowed while composing.
+        feed(&mut layer, &mut engine, "Kai");
+        assert!(layer.process_key(&mut engine, &ctrl('w')).consumed);
+        assert_eq!(engine.preedit().unwrap().text(), "かい");
     }
 
     #[test]
