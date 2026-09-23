@@ -428,7 +428,8 @@ impl InputMethodEngine {
         // Exact match — only when no romaji tail is pending (an exact hit
         // on the base would ignore the typed tail)
         if pending.is_empty() {
-            for (surface, _score) in cache.lookup(reading) {
+            let lctx = self.truncate_context_for_api();
+            for (surface, _score) in cache.lookup_with_context(reading, &lctx) {
                 if candidates.len() >= max {
                     break;
                 }
@@ -717,8 +718,9 @@ impl InputMethodEngine {
         if self.mode.current() == InputMode::Emoji {
             return;
         }
+        let lctx = self.truncate_context_for_api();
         if let Some(cache) = &mut self.learning {
-            cache.record(reading, surface);
+            cache.record_with_context(reading, surface, &lctx);
         }
     }
 

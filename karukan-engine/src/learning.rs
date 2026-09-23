@@ -2,7 +2,7 @@
 //!
 //! Records which surface forms the user chose for each reading, and
 //! boosts those candidates on subsequent conversions. Persisted as a
-//! simple TSV file (`reading\tsurface\tfrequency\tlast_access`).
+//! simple TSV file (`reading\tsurface\tfrequency\tlast_access[\tcontexts]`).
 
 use std::collections::HashMap;
 use std::io::{BufRead, Write};
@@ -18,6 +18,51 @@ pub struct LearningEntry {
     pub frequency: u32,
     /// Last selection time as Unix timestamp (seconds)
     pub last_access: u64,
+    /// Tails of the left context this surface was committed after, most
+    /// recent first (at most [`MAX_CONTEXTS`], each [`CONTEXT_CHARS`] long).
+    pub contexts: Vec<String>,
+}
+
+/// Contexts kept per entry.
+const MAX_CONTEXTS: usize = 4;
+/// Left-context chars kept per recorded context.
+const CONTEXT_CHARS: usize = 8;
+/// Score per char of left context shared with a recorded one. One shared
+/// char already outweighs any recency/frequency gap (at most ~10 + ln f).
+const CONTEXT_WEIGHT: f64 = 10.0;
+/// Separates contexts in the TSV column (never typed as text).
+const CONTEXT_SEP: char = '\u{1f}';
+
+fn context_tail(lctx: &str) -> String {
+    let chars: Vec<char> = lctx
+        .chars()
+        .filter(|c| *c != '\t' && *c != '\n' && *c != CONTEXT_SEP)
+        .collect();
+    chars[chars.len().saturating_sub(CONTEXT_CHARS)..]
+        .iter()
+        .collect()
+}
+
+/// Chars `a` and `b` share at their ends.
+fn common_suffix_len(a: &str, b: &str) -> usize {
+    a.chars()
+        .rev()
+        .zip(b.chars().rev())
+        .take_while(|(x, y)| x == y)
+        .count()
+}
+
+impl LearningEntry {
+    /// Bonus for the recorded context closest to `lctx`.
+    fn context_bonus(&self, lctx: &str) -> f64 {
+        let best = self
+            .contexts
+            .iter()
+            .map(|c| common_suffix_len(c, lctx))
+            .max()
+            .unwrap_or(0);
+        best as f64 * CONTEXT_WEIGHT
+    }
 }
 
 /// Size limits for a [`LearningCache`].
@@ -80,21 +125,40 @@ impl LearningCache {
     /// Surfaces longer than `max_surface_chars` are skipped; see
     /// [`LearningConfig::max_surface_chars`] for why.
     pub fn record(&mut self, reading: &str, surface: &str) {
+        self.record_with_context(reading, surface, "");
+    }
+
+    /// [`Self::record`], remembering the left context the surface was
+    /// committed after, so [`Self::lookup_with_context`] can prefer it there.
+    pub fn record_with_context(&mut self, reading: &str, surface: &str, lctx: &str) {
         if surface.chars().count() > self.max_surface_chars {
             return;
         }
         let now = now_unix();
         let entries = self.entries.entry(reading.to_string()).or_default();
 
-        if let Some(entry) = entries.iter_mut().find(|e| e.surface == surface) {
-            entry.frequency += 1;
-            entry.last_access = now;
-        } else {
-            entries.push(LearningEntry {
-                surface: surface.to_string(),
-                frequency: 1,
-                last_access: now,
-            });
+        let entry = match entries.iter().position(|e| e.surface == surface) {
+            Some(i) => {
+                let entry = &mut entries[i];
+                entry.frequency += 1;
+                entry.last_access = now;
+                entry
+            }
+            None => {
+                entries.push(LearningEntry {
+                    surface: surface.to_string(),
+                    frequency: 1,
+                    last_access: now,
+                    contexts: Vec::new(),
+                });
+                entries.last_mut().expect("just pushed")
+            }
+        };
+        let ctx = context_tail(lctx);
+        if !ctx.is_empty() {
+            entry.contexts.retain(|c| *c != ctx);
+            entry.contexts.insert(0, ctx);
+            entry.contexts.truncate(MAX_CONTEXTS);
         }
         self.dirty = true;
     }
@@ -124,13 +188,19 @@ impl LearningCache {
 
     /// Exact-match lookup: returns `(surface, score)` pairs sorted by score descending.
     pub fn lookup(&self, reading: &str) -> Vec<(String, f64)> {
+        self.lookup_with_context(reading, "")
+    }
+
+    /// [`Self::lookup`], boosting surfaces committed after a left context
+    /// that ends like `lctx`.
+    pub fn lookup_with_context(&self, reading: &str, lctx: &str) -> Vec<(String, f64)> {
         let now = now_unix();
         let Some(entries) = self.entries.get(reading) else {
             return Vec::new();
         };
         let mut scored: Vec<(String, f64)> = entries
             .iter()
-            .map(|e| (e.surface.clone(), score(e, now)))
+            .map(|e| (e.surface.clone(), score(e, now) + e.context_bonus(lctx)))
             .collect();
         scored.sort_by(|a, b| b.1.total_cmp(&a.1));
         scored
@@ -190,6 +260,15 @@ impl LearningCache {
                     surface: surface.to_string(),
                     frequency,
                     last_access,
+                    contexts: parts
+                        .get(4)
+                        .map(|c| {
+                            c.split(CONTEXT_SEP)
+                                .filter(|c| !c.is_empty())
+                                .map(str::to_string)
+                                .collect()
+                        })
+                        .unwrap_or_default(),
                 });
         }
 
@@ -217,11 +296,16 @@ impl LearningCache {
         for reading in readings {
             if let Some(entries) = self.entries.get(reading) {
                 for entry in entries {
-                    writeln!(
+                    write!(
                         writer,
                         "{}\t{}\t{}\t{}",
                         reading, entry.surface, entry.frequency, entry.last_access
                     )?;
+                    if !entry.contexts.is_empty() {
+                        let sep = CONTEXT_SEP.to_string();
+                        write!(writer, "\t{}", entry.contexts.join(&sep))?;
+                    }
+                    writeln!(writer)?;
                 }
             }
         }
@@ -435,11 +519,13 @@ mod tests {
             surface: "A".to_string(),
             frequency: 1,
             last_access: now,
+            contexts: Vec::new(),
         };
         let old = LearningEntry {
             surface: "B".to_string(),
             frequency: 1,
             last_access: now.saturating_sub(30 * 86400), // 30 days ago
+            contexts: Vec::new(),
         };
         assert!(score(&recent, now) > score(&old, now));
     }
@@ -451,11 +537,13 @@ mod tests {
             surface: "A".to_string(),
             frequency: 100,
             last_access: now,
+            contexts: Vec::new(),
         };
         let low_freq = LearningEntry {
             surface: "B".to_string(),
             frequency: 1,
             last_access: now,
+            contexts: Vec::new(),
         };
         assert!(score(&high_freq, now) > score(&low_freq, now));
     }
@@ -601,5 +689,21 @@ mod tests {
         let cache = LearningCache::load(file.path(), config_with(100)).unwrap();
         // Only the first valid line should be loaded
         assert_eq!(cache.entry_count(), 1);
+    }
+
+    #[test]
+    fn test_context_outranks_recency() {
+        let mut cache = LearningCache::new(LearningConfig::default());
+        cache.record_with_context("かいぎ", "会議", "本日の");
+        cache.record_with_context("かいぎ", "懐疑", "その説に");
+        // Most recent wins without context, the matching context wins with it.
+        assert_eq!(cache.lookup_with_context("かいぎ", "明日の")[0].0, "会議");
+        assert_eq!(cache.lookup_with_context("かいぎ", "理論に")[0].0, "懐疑");
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("learning.tsv");
+        cache.save(&path).unwrap();
+        let loaded = LearningCache::load(&path, LearningConfig::default()).unwrap();
+        assert_eq!(loaded.lookup_with_context("かいぎ", "本日の")[0].0, "会議");
     }
 }
