@@ -77,9 +77,30 @@ final class CandidateListView: NSView {
     /// Draw the keyboard layout instead of the list.
     var keyboard = false
 
-    /// Keyboard layout: (row, column) of each page position, in the order
-    /// of the select keys j k f d u i r e.
-    private static let slots = [(1, 2), (1, 3), (1, 1), (1, 0), (0, 2), (0, 3), (0, 1), (0, 0)]
+    /// The select keys, whose places on a QWERTY keyboard lay the keyboard
+    /// layout out.
+    var slotKeys = Array("jkfduire")
+
+    private static let qwerty = ["1234567890", "qwertyuiop", "asdfghjkl;", "zxcvbnm,./"]
+
+    /// Keyboard layout: (row, column) of each page position — the rows and
+    /// columns its keys use on the keyboard, packed — and the column where
+    /// the right hand starts.
+    private var slots: (cells: [(Int, Int)], columns: Int, rightFrom: Int) {
+        let places = slotKeys.map { key -> (Int, Int) in
+            for (row, line) in Self.qwerty.enumerated() {
+                if let col = line.firstIndex(of: Character(key.lowercased())) {
+                    return (row, line.distance(from: line.startIndex, to: col))
+                }
+            }
+            return (Self.qwerty.count, 0)
+        }
+        let rows = Array(Set(places.map(\.0))).sorted()
+        let cols = Array(Set(places.map(\.1))).sorted()
+        let cells = places.map { (rows.firstIndex(of: $0.0)!, cols.firstIndex(of: $0.1)!) }
+        return (cells, cols.count, cols.firstIndex { $0 >= 5 } ?? cols.count)
+    }
+    private var slotRows: Int { Set(slots.cells.map(\.0)).count }
     /// The gap between the hands, on top of a cell's own.
     private let handGap = Swiss.grid * 2
     private var cellWidth: CGFloat {
@@ -105,8 +126,8 @@ final class CandidateListView: NSView {
             let headW =
                 pad * 2 + size(header ?? "", Swiss.headFont).width
                 + size(page ?? "", Swiss.smallFont).width + Swiss.grid * 3
-            let width = max(pad * 2 + cellWidth * 4 + handGap, headW)
-            let height = Swiss.grid + headerHeight + rowHeight * 2 + Swiss.grid
+            let width = max(pad * 2 + cellWidth * CGFloat(slots.columns) + handGap, headW)
+            let height = Swiss.grid + headerHeight + rowHeight * CGFloat(slotRows) + Swiss.grid
             return NSSize(width: ceil(width), height: height)
         }
         let textW = rows.map { size($0.text, Swiss.selectedFont).width }.max() ?? 0
@@ -142,9 +163,10 @@ final class CandidateListView: NSView {
             y += 2
         }
         if keyboard {
-            for (index, row) in rows.enumerated() where index < Self.slots.count {
-                let (line, column) = Self.slots[index]
-                let x = pad + CGFloat(column) * cellWidth + (column >= 2 ? handGap : 0)
+            let layout = slots
+            for (index, row) in rows.enumerated() where index < layout.cells.count {
+                let (line, column) = layout.cells[index]
+                let x = pad + CGFloat(column) * cellWidth + (column >= layout.rightFrom ? handGap : 0)
                 drawCell(row, x: x, mid: y + CGFloat(line) * rowHeight + rowHeight / 2)
             }
             return
@@ -194,7 +216,8 @@ final class CandidateListView: NSView {
 /// page metadata, so this controller only maps it onto `CandidateListView`.
 /// The aux text (the reading, see `part.rs`) heads the list.
 class CandidateWindowController {
-    static let selectKeys = Array("jkfduire")
+    /// The select keys in page order (`[keys] select`, from the engine).
+    var keys = Array("jkfduire")
 
     private let panel: NSPanel
     private let listView = CandidateListView()
@@ -271,10 +294,11 @@ class CandidateWindowController {
         }
         listView.header = auxText.flatMap { $0.isEmpty ? nil : $0 }
         listView.keyboard = layout == "keyboard"
+        listView.slotKeys = keys
         listView.page = state.totalPages > 1 ? "\(state.page + 1) / \(state.totalPages)" : nil
         listView.rows = state.candidates.enumerated().map { index, candidate in
             CandidateListView.Row(
-                key: showsKeys && index < Self.selectKeys.count ? String(Self.selectKeys[index]) : "",
+                key: showsKeys && index < keys.count ? String(keys[index]) : "",
                 text: candidate.text,
                 note: candidate.description,
                 selected: index == state.cursor)
