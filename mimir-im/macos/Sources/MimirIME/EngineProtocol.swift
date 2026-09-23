@@ -16,6 +16,8 @@ struct KeyResult: Decodable {
     let hint: String?
     /// Whether a–l pick from the candidate window; absent from older engines.
     let selectKeys: Bool?
+    /// `[display] candidate_layout`: "vertical" or "keyboard".
+    let candidateLayout: String?
 }
 
 struct PreeditAttr: Decodable {

@@ -13,7 +13,7 @@
 //!
 //! Inside a part, candidate keys are Emacs-style so nothing collides with
 //! SandS: Ctrl+N opens the candidate window / next candidate, Ctrl+P the
-//! previous one, `a s d f j k l` pick one, Ctrl+G cancels.
+//! previous one, `j k f d u i r e` pick one, Ctrl+G cancels.
 //!
 //! Ctrl+R inside a part registers a word: the part's reading is kept, the
 //! word is typed with the same keys (its commits are captured instead of
@@ -33,8 +33,11 @@ const RECENT_MAX_CHARS: usize = 12;
 /// Completions listed in the hint panel.
 const HINT_COMPLETIONS: usize = 3;
 
-/// Keys that pick a candidate from the open window, in page order.
-pub const SELECT_KEYS: &str = "asdfjkl";
+/// Keys that pick a candidate from the open window, in page order: the
+/// index and middle fingers' home keys, then the keys above them, right
+/// hand before left — the likeliest candidates on the easiest keys. The
+/// keyboard layout of the window draws each candidate where its key is.
+pub const SELECT_KEYS: &str = "jkfduire";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PartMode {
@@ -948,13 +951,13 @@ mod tests {
         assert!(layer.picks_by_letter());
         layer.process_key(&mut engine, &ctrl('n'));
         assert!(!layer.picks_by_letter());
-        // `a` commits the selection (the second candidate, カイギ without
+        // `j` commits the selection (the second candidate, カイギ without
         // a model) and types on.
-        assert_eq!(feed(&mut layer, &mut engine, "a"), "カイギあ");
+        assert_eq!(feed(&mut layer, &mut engine, "ja"), "カイギじゃ");
         // A window just opened still picks by letter.
         feed(&mut layer, &mut engine, "Kaigi");
         layer.process_key(&mut engine, &ctrl('n'));
-        assert_eq!(feed(&mut layer, &mut engine, "a"), "かいぎ");
+        assert_eq!(feed(&mut layer, &mut engine, "j"), "かいぎ");
         assert!(matches!(engine.state(), InputState::Empty));
     }
 
