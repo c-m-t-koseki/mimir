@@ -47,6 +47,8 @@ Honjitu no Kaigi ha  →  本日の会議は
 | 単語登録 | Ctrl+R → 語を入力 → Enter（Ctrl+G で中止） |
 | カーソル移動 | Ctrl+B / Ctrl+F / Ctrl+A / Ctrl+E（← → Home End も可） |
 
+Google 日本語入力と同じ `z` 入力が使える（zh ← / zj ↓ / zk ↑ / zl → / z. … / z, ‥ / z/ ・ / z- 〜 / z+Space 全角スペース）。`z` の直後の `l`・Space・`,` `.` は、英数への切り替えやパートの終了ではなく、この入力として扱う。
+
 子音が未確定の間に来た大文字（SandS で Space を離す前に打った `S E` など）は、次のパートを開かずに小文字として続く。
 
 ### 候補窓を開いている間
