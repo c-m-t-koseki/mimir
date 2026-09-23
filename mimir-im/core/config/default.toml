@@ -93,12 +93,14 @@ part_hint = "completion"
 # 2段: 上段 e r u i、下段 d f j k）
 candidate_layout = "vertical"
 # ライブ変換中の読みの見せ方（macOS）。
+# "tail"   打った末尾の tail_chars 文字を平仮名のまま残し、tail_delay_ms ミリ秒
+#          手を止めると変換する（子音だけを打った間は変換を戻さない）
 # "ruby"   最後の漢字のかたまりの真上に、その読みを小さく出す
-# "tail"   打った末尾の tail_chars 文字を平仮名のまま残し、手を止めると変換する
 # "inline" 最後の漢字のかたまりの読みを後ろに添える（今日はいい天気〈てんき〉）
 # "none"   出さない
-reading_display = "ruby"
-tail_chars = 2
+reading_display = "tail"
+tail_chars = 1
+tail_delay_ms = 250
 
 # どのキーがどの記号を入力するか。幅（半角・全角）は [width] が決める。
 [symbol]

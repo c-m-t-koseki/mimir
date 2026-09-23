@@ -154,10 +154,10 @@ pub enum ReadingDisplay {
     /// Not at all.
     None,
     /// Above the last kanji run of the preedit, like furigana.
-    #[default]
     Ruby,
     /// The last `tail_chars` typed stay kana in the preedit, until typing
-    /// pauses.
+    /// pauses for `tail_delay_ms`.
+    #[default]
     Tail,
     /// After the preedit, for its last kanji run: 天気〈てんき〉.
     Inline,
@@ -181,6 +181,9 @@ pub struct DisplaySettings {
     pub reading_display: ReadingDisplay,
     /// `reading_display = "tail"`: how many typed chars stay kana
     pub tail_chars: usize,
+    /// `reading_display = "tail"`: the pause, in milliseconds, after which
+    /// the tail converts too
+    pub tail_delay_ms: u64,
 }
 
 /// Candidates one per row, or each where its select key is on the
