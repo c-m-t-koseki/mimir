@@ -49,6 +49,15 @@ fn context_tail(lctx: &str) -> String {
         .collect()
 }
 
+/// The text after the last clause break (punctuation, brackets, spaces).
+fn last_clause(ctx: &str) -> &str {
+    let is_break = |c: char| "、。，．,.！？!?「」『』（）()[] 　\n".contains(c);
+    match ctx.char_indices().rfind(|&(_, c)| is_break(c)) {
+        Some((i, c)) => &ctx[i + c.len_utf8()..],
+        None => ctx,
+    }
+}
+
 /// Chars `a` and `b` share at their ends.
 fn common_suffix_len(a: &str, b: &str) -> usize {
     a.chars()
@@ -85,6 +94,9 @@ pub struct LearningConfig {
     /// accepts. Keeps whole-sentence live-conversion commits — one-off text
     /// that never matches again — out of the cache.
     pub max_surface_chars: usize,
+    /// Minimum surface length recorded. 1 records everything; 2 keeps a
+    /// lone て or 中 — no word on its own — out.
+    pub min_surface_chars: usize,
 }
 
 impl LearningConfig {
@@ -99,6 +111,7 @@ impl Default for LearningConfig {
         Self {
             max_entries: Self::DEFAULT_MAX_ENTRIES,
             max_surface_chars: Self::DEFAULT_MAX_SURFACE_CHARS,
+            min_surface_chars: 1,
         }
     }
 }
@@ -112,6 +125,7 @@ pub struct LearningCache {
     entries: HashMap<String, Vec<LearningEntry>>,
     max_entries: usize,
     max_surface_chars: usize,
+    min_surface_chars: usize,
     dirty: bool,
 }
 
@@ -122,6 +136,7 @@ impl LearningCache {
             entries: HashMap::new(),
             max_entries: config.max_entries,
             max_surface_chars: config.max_surface_chars,
+            min_surface_chars: config.min_surface_chars,
             dirty: false,
         }
     }
@@ -137,7 +152,11 @@ impl LearningCache {
     /// [`Self::record`], remembering the left context the surface was
     /// committed after, so [`Self::lookup_with_context`] can prefer it there.
     pub fn record_with_context(&mut self, reading: &str, surface: &str, lctx: &str) {
-        if surface.chars().count() > self.max_surface_chars || has_unfired_romaji(reading) {
+        let len = surface.chars().count();
+        if len > self.max_surface_chars
+            || len < self.min_surface_chars
+            || has_unfired_romaji(reading)
+        {
             return;
         }
         let now = now_unix();
@@ -246,29 +265,23 @@ impl LearningCache {
         scored
     }
 
-    /// The best surface for `reading` among those committed after a left
-    /// context sharing at least `min_shared` trailing chars with `lctx` —
-    /// learning strong enough to override a context-aware model. `None`
-    /// when nothing was learned in a context like this one.
-    pub fn lookup_in_context(
-        &self,
-        reading: &str,
-        lctx: &str,
-        min_shared: usize,
-    ) -> Option<String> {
+    /// The surface for `reading` last committed right after the same clause
+    /// that ends `lctx` (the text since the last punctuation, at most
+    /// [`CONTEXT_CHARS`]): the phrase *with what came before it* was seen
+    /// and chosen, so it can override a context-aware model. A clause never
+    /// seen with this reading gives `None` — trust the model there.
+    pub fn lookup_after_clause(&self, reading: &str, lctx: &str) -> Option<String> {
+        let tail = context_tail(lctx);
+        let clause = last_clause(&tail);
+        if clause.is_empty() {
+            return None;
+        }
         let now = now_unix();
         self.entries
             .get(reading)?
             .iter()
-            .filter(|e| {
-                e.contexts
-                    .iter()
-                    .any(|c| common_suffix_len(c, lctx) >= min_shared)
-            })
-            .max_by(|a, b| {
-                let score = |e: &LearningEntry| score(e, now) + e.context_bonus(lctx);
-                score(a).total_cmp(&score(b))
-            })
+            .filter(|e| e.contexts.iter().any(|c| last_clause(c) == clause))
+            .max_by(|a, b| score(a, now).total_cmp(&score(b, now)))
             .map(|e| e.surface.clone())
     }
 
@@ -309,7 +322,7 @@ impl LearningCache {
             }
             let reading = parts[0];
             let surface = parts[1];
-            if has_unfired_romaji(reading) {
+            if has_unfired_romaji(reading) || surface.chars().count() < cache.min_surface_chars {
                 continue;
             }
             let frequency: u32 = match parts[2].parse() {
@@ -705,6 +718,7 @@ mod tests {
         let mut cache = LearningCache::new(LearningConfig {
             max_entries: 100,
             max_surface_chars: 5,
+            min_surface_chars: 1,
         });
 
         cache.record("あ", &"漢".repeat(6));
@@ -721,6 +735,7 @@ mod tests {
         let mut cache = LearningCache::new(LearningConfig {
             max_entries: 100,
             max_surface_chars: 5,
+            min_surface_chars: 1,
         });
 
         // Only the surface is capped; a long reading with a short surface
@@ -777,25 +792,14 @@ mod tests {
     }
 
     #[test]
-    fn test_lookup_in_context_needs_a_matching_context() {
-        let mut cache = LearningCache::new(LearningConfig::default());
-        cache.record_with_context("ちゅう", "中", "なっている。入力");
-        cache.record_with_context("ちゅう", "注", "しているときに、");
-        assert_eq!(
-            cache
-                .lookup_in_context("ちゅう", "文字を入力", 2)
-                .as_deref(),
-            Some("中")
-        );
-        // A different context: leave it to the model, however recent 注 is.
-        assert_eq!(cache.lookup_in_context("ちゅう", "かっこ「", 2), None);
-        assert_eq!(cache.lookup_in_context("ちゅう", "", 2), None);
-    }
-
-    #[test]
-    fn test_unfired_romaji_is_never_learned() {
-        let mut cache = LearningCache::new(LearningConfig::default());
+    fn test_unfired_romaji_and_short_surfaces_are_never_learned() {
+        let mut cache = LearningCache::new(LearningConfig {
+            min_surface_chars: 2,
+            ..Default::default()
+        });
         cache.record("s", "s");
+        cache.record("て", "て");
+        cache.record("ちゅう", "中");
         cache.record("でざいn", "デザイn");
         assert_eq!(cache.entry_count(), 0);
 
@@ -816,5 +820,30 @@ mod tests {
         assert_eq!(cache.entries().len(), 1);
         cache.clear();
         assert_eq!(cache.entry_count(), 0);
+    }
+
+    #[test]
+    fn test_lookup_after_clause_needs_the_same_preceding_clause() {
+        let mut cache = LearningCache::new(LearningConfig::default());
+        cache.record_with_context("はいしゃ", "歯医者", "昨日は、歯が痛いので");
+        assert_eq!(
+            cache
+                .lookup_after_clause("はいしゃ", "今日も歯が痛いので")
+                .as_deref(),
+            None,
+            "clause 今日も歯が痛いので differs"
+        );
+        assert_eq!(
+            cache
+                .lookup_after_clause("はいしゃ", "朝から、歯が痛いので")
+                .as_deref(),
+            Some("歯医者")
+        );
+        // A clause never seen with this reading: leave it to the model.
+        assert_eq!(
+            cache.lookup_after_clause("はいしゃ", "車が壊れたので"),
+            None
+        );
+        assert_eq!(cache.lookup_after_clause("はいしゃ", "。"), None);
     }
 }

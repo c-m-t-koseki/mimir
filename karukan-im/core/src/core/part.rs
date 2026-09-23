@@ -22,6 +22,9 @@ use super::state::InputState;
 use crate::config::Settings;
 use crate::config::settings::PartHint;
 
+/// Longest committed text a one-char part is joined to for learning.
+const RECENT_MAX_CHARS: usize = 12;
+
 /// Completions listed in the hint panel.
 const HINT_COMPLETIONS: usize = 3;
 
@@ -44,6 +47,10 @@ pub struct PartLayer {
     hint: PartHint,
     /// Word registration in progress: the reading and the word so far.
     register: Option<Registration>,
+    /// What was committed just before, `(reading, text)`: the last part
+    /// plus the plain kana typed after it. A one-char part (て, 中) is no
+    /// word on its own and is learned joined to this.
+    recent: Option<(String, String)>,
 }
 
 struct Registration {
@@ -77,6 +84,7 @@ impl PartLayer {
             mode: PartMode::Plain,
             hint: PartHint::default(),
             register: None,
+            recent: None,
         }
     }
 
@@ -220,11 +228,66 @@ impl PartLayer {
     fn close(&mut self, engine: &mut InputMethodEngine) -> EngineResult {
         match (self.mode, engine.state()) {
             (_, InputState::Empty) => EngineResult::consumed(),
-            (PartMode::Part, _) => {
+            (PartMode::Part, InputState::Composing { .. }) => {
                 engine.settle_pending();
+                self.learn_part(engine);
+                engine.commit_unlearned_result()
+            }
+            (PartMode::Part, _) => {
+                self.recent = None;
                 engine.commit_result()
             }
-            _ => engine.commit_plain_result(),
+            _ => {
+                let result = engine.commit_plain_result();
+                self.note_plain_commits(&result);
+                result
+            }
+        }
+    }
+
+    /// Learn the part about to be committed. A one-char result (て, 中) is
+    /// no word of its own: it is learned joined to what was committed just
+    /// before it (入力 + 中 → にゅうりょくちゅう→入力中), or not at all.
+    fn learn_part(&mut self, engine: &mut InputMethodEngine) {
+        let Some((reading, text)) = engine.composing_commit_preview() else {
+            return;
+        };
+        if text.is_empty() {
+            return;
+        }
+        let (reading, text) = if text.chars().count() == 1 {
+            let Some((prev_reading, prev_text)) = self.recent.take() else {
+                return;
+            };
+            let joined = (
+                format!("{prev_reading}{reading}"),
+                format!("{prev_text}{text}"),
+            );
+            engine.learn_after(&joined.0, &joined.1, &prev_text);
+            joined
+        } else {
+            engine.learn(&reading, &text);
+            (reading, text)
+        };
+        self.recent = (text.chars().count() <= RECENT_MAX_CHARS).then_some((reading, text));
+    }
+
+    /// Plain kana committed after a part extends `recent` (会議 + の); any
+    /// other text — punctuation, ASCII — ends it.
+    fn note_plain_commits(&mut self, result: &EngineResult) {
+        for action in &result.actions {
+            let EngineAction::Commit(text) = action else {
+                continue;
+            };
+            self.recent = match self.recent.take() {
+                Some((r, t))
+                    if text.chars().all(|c| matches!(c, 'ぁ'..='ゖ' | 'ー'))
+                        && t.chars().count() + text.chars().count() <= RECENT_MAX_CHARS =>
+                {
+                    Some((r + text, t + text))
+                }
+                _ => None,
+            };
         }
     }
 
@@ -264,6 +327,7 @@ impl PartLayer {
         if matches!(engine.state(), InputState::Composing { .. }) && !engine.has_pending_romaji() {
             result = merge(result, engine.commit_plain_result());
         }
+        self.note_plain_commits(&result);
         result
     }
 
@@ -593,6 +657,10 @@ mod tests {
         committed
     }
 
+    fn engine_learning_on(engine: &mut InputMethodEngine) {
+        engine.enable_learning_for_test();
+    }
+
     fn setup() -> (PartLayer, InputMethodEngine) {
         let mut engine = InputMethodEngine::new();
         let mut layer = PartLayer::new();
@@ -752,6 +820,34 @@ mod tests {
         feed(&mut layer, &mut engine, "Kai");
         assert!(layer.process_key(&mut engine, &ctrl('w')).consumed);
         assert_eq!(engine.preedit().unwrap().text(), "かい");
+    }
+
+    fn learned(engine: &InputMethodEngine) -> Vec<(String, String)> {
+        engine
+            .learning_entries()
+            .into_iter()
+            .map(|(r, s, _, _)| (r, s))
+            .collect()
+    }
+
+    #[test]
+    fn one_char_part_is_learned_joined_to_what_came_before() {
+        let (mut layer, mut engine) = setup();
+        engine_learning_on(&mut engine);
+        // No model: parts commit their reading. かいぎ, plain の, then て.
+        feed(&mut layer, &mut engine, "Kaigi noTe ");
+        let learned = learned(&engine);
+        assert!(learned.contains(&("かいぎ".into(), "かいぎ".into())));
+        assert!(learned.contains(&("かいぎのて".into(), "かいぎのて".into())));
+        assert!(!learned.iter().any(|(r, _)| r == "て"));
+    }
+
+    #[test]
+    fn punctuation_ends_what_a_one_char_part_joins() {
+        let (mut layer, mut engine) = setup();
+        engine_learning_on(&mut engine);
+        feed(&mut layer, &mut engine, "Kaigi.Te ");
+        assert!(!learned(&engine).iter().any(|(r, _)| r.ends_with('て')));
     }
 
     #[test]
