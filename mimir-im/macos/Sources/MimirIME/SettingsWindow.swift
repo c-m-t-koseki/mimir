@@ -22,6 +22,8 @@ final class SettingsModel: ObservableObject {
     /// Saved model combinations: name → (main, light).
     @Published var profiles: [String: (model: String, light: String)] = [:]
     @Published var error: String?
+    /// `[keys]`: action → its keys, as written.
+    @Published var keys: [String: String] = [:]
 
     /// Values as last read or written, by `section.key`: SwiftUI's onChange
     /// also fires for what `load` just set, which must not be written back.
@@ -48,6 +50,7 @@ final class SettingsModel: ObservableObject {
         models = config["models"] as? [String] ?? models
         let rawProfiles = config["profiles"] as? [String: [String: String]] ?? [:]
         profiles = rawProfiles.mapValues { ($0["model"] ?? "", $0["light_model"] ?? "") }
+        keys = config["keys"] as? [String: String] ?? keys
         saved = [
             "display.part_hint": partHint, "display.candidate_layout": candidateLayout,
             "display.reading_display": readingDisplay, "display.tail_delay_ms": "\(tailDelayMs)",
@@ -57,6 +60,9 @@ final class SettingsModel: ObservableObject {
             "conversion.model": model, "conversion.light_model": lightModel,
             "learning.enabled": "\(learning)", "date.enabled": "\(date)",
         ]
+        for (action, value) in keys {
+            saved["keys.\(action)"] = value
+        }
         error = nil
     }
 
@@ -330,6 +336,45 @@ struct GeneralTab: View {
     }
 }
 
+/// `[keys]`: each action's keys, edited as text and saved on Return. A
+/// binding that doesn't parse is refused (and the old one shown again).
+struct KeysTab: View {
+    @ObservedObject var model: SettingsModel
+
+    private static let actions: [(String, String)] = [
+        ("convert", "候補窓を開く"), ("next", "次の候補"), ("prev", "前の候補"),
+        ("select", "候補を選ぶキー（8文字）"), ("close", "パートを閉じて確定"), ("commit", "すべて確定"),
+        ("cancel", "取り消す"), ("katakana", "カタカナで確定"), ("complete", "以前の入力で補完"),
+        ("left", "変換範囲を縮める"), ("right", "変換範囲を伸ばす"), ("home", "先頭の1文字だけ"),
+        ("end", "全体"), ("register", "単語登録"), ("discard", "入力を捨てる"),
+        ("kana", "かな入力へ"), ("ascii", "英数（直接入力）へ"), ("abbrev", "英字のまま変換"),
+    ]
+
+    var body: some View {
+        Form {
+            Section {
+                ForEach(Self.actions, id: \.0) { action, label in
+                    TextField(
+                        label,
+                        text: Binding(
+                            get: { model.keys[action] ?? "" },
+                            set: { model.keys[action] = $0 })
+                    )
+                    .onSubmit {
+                        if !model.set("keys", action, model.keys[action] ?? "") {
+                            model.load()
+                        }
+                    }
+                }
+            } footer: {
+                Text("Emacs 式: C-n（Ctrl+N）、S-Tab（Shift+Tab）、Space Return Escape Tab Left Right Home End など、または1文字。空白で区切って複数。Return で保存。")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+    }
+}
+
 struct ModelTab: View {
     @ObservedObject var model: SettingsModel
     @StateObject private var profiler = ModelProfiler()
@@ -512,6 +557,7 @@ struct SettingsView: View {
         VStack(spacing: 0) {
             TabView {
                 GeneralTab(model: model).tabItem { Text("一般") }
+                KeysTab(model: model).tabItem { Text("キー") }
                 ModelTab(model: model).tabItem { Text("モデル") }
                 DictionaryTab().tabItem { Text("辞書") }
                 LearningTab().tabItem { Text("学習") }

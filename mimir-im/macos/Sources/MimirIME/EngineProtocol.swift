@@ -16,6 +16,8 @@ struct KeyResult: Decodable {
     let hint: String?
     /// Whether a–l pick from the candidate window; absent from older engines.
     let selectKeys: Bool?
+    /// The select keys in page order (`[keys] select`).
+    let selectChars: String?
     /// `[display] candidate_layout`: "vertical" or "keyboard".
     let candidateLayout: String?
     /// The reading to set above the preedit's last kanji run.
