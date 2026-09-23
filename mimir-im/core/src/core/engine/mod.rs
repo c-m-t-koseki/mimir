@@ -983,21 +983,19 @@ impl InputMethodEngine {
         self.save_learning();
     }
 
-    /// Save the learning cache to disk if it has unsaved changes.
+    /// Save the learning cache and the history if they have unsaved
+    /// changes, taking in what another process wrote to them meanwhile
+    /// ([`LearningCache::sync`]).
     pub fn save_learning(&mut self) {
         for (cache, path) in [
             (&mut self.learning, Settings::learning_file()),
             (&mut self.history, Settings::history_file()),
         ] {
             if let Some(cache) = cache
-                && cache.is_dirty()
                 && let Some(path) = path
+                && let Err(e) = cache.sync(&path)
             {
-                if let Err(e) = cache.save(&path) {
-                    debug!("Failed to save {:?}: {}", path, e);
-                } else {
-                    debug!("Saved {:?}", path);
-                }
+                debug!("Failed to sync {:?}: {}", path, e);
             }
         }
     }
