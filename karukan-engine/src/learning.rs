@@ -192,6 +192,40 @@ impl LearningCache {
         removed
     }
 
+    /// Every entry as `(reading, entry)`, readings sorted — for editing the
+    /// history in a UI.
+    pub fn entries(&self) -> Vec<(&str, &LearningEntry)> {
+        let mut all: Vec<_> = self
+            .entries
+            .iter()
+            .flat_map(|(r, es)| es.iter().map(move |e| (r.as_str(), e)))
+            .collect();
+        all.sort_by(|a, b| a.0.cmp(b.0).then(b.1.last_access.cmp(&a.1.last_access)));
+        all
+    }
+
+    /// Forget exactly `reading → surface` (no prefix fan-out, unlike
+    /// [`Self::remove_suggestion`]). Returns whether it existed.
+    pub fn remove(&mut self, reading: &str, surface: &str) -> bool {
+        let Some(entries) = self.entries.get_mut(reading) else {
+            return false;
+        };
+        let before = entries.len();
+        entries.retain(|e| e.surface != surface);
+        let removed = entries.len() != before;
+        if entries.is_empty() {
+            self.entries.remove(reading);
+        }
+        self.dirty |= removed;
+        removed
+    }
+
+    /// Forget everything.
+    pub fn clear(&mut self) {
+        self.entries.clear();
+        self.dirty = true;
+    }
+
     /// Exact-match lookup: returns `(surface, score)` pairs sorted by score descending.
     pub fn lookup(&self, reading: &str) -> Vec<(String, f64)> {
         self.lookup_with_context(reading, "")
@@ -770,5 +804,17 @@ mod tests {
         std::fs::write(&path, "でざいn\tデザイn\t3\t0\nでざいん\tデザイン\t1\t0\n").unwrap();
         let loaded = LearningCache::load(&path, LearningConfig::default()).unwrap();
         assert_eq!(loaded.entry_count(), 1);
+    }
+
+    #[test]
+    fn test_remove_is_exact_and_clear_empties() {
+        let mut cache = LearningCache::new(LearningConfig::default());
+        cache.record("きょう", "今日");
+        cache.record("きょうと", "今日と");
+        assert!(cache.remove("きょう", "今日"));
+        assert!(!cache.remove("きょう", "今日"));
+        assert_eq!(cache.entries().len(), 1);
+        cache.clear();
+        assert_eq!(cache.entry_count(), 0);
     }
 }
