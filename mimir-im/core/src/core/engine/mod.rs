@@ -357,6 +357,23 @@ impl InputMethodEngine {
 
     /// End the composition without committing, returning its kana reading
     /// (the word-registration flow takes the reading, then asks for the word).
+    /// The whole reading being composed or converted.
+    pub fn reading(&self) -> String {
+        self.input_buf.reading()
+    }
+
+    /// Compose `reading` afresh, as if just typed (the part layer moving
+    /// where a part's conversion stops). Rendered like typing, so
+    /// `candidate_window = "conversion"` keeps the window closed.
+    pub fn reopen(&mut self, reading: &str) -> EngineResult {
+        self.end_composition();
+        reading
+            .chars()
+            .for_each(|ch| self.input_buf.push_direct(ch));
+        let result = self.refresh_input_state();
+        self.hide_candidate_window(result)
+    }
+
     /// SKK's abbrev input (`/`): letters go in as typed, until converted.
     pub fn start_abbrev(&mut self) {
         self.mode.enter_temporary(InputMode::Alphabet);
