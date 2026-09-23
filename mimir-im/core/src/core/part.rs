@@ -52,6 +52,9 @@ pub struct PartLayer {
     hint: PartHint,
     /// The open part is abbrev input (`/`).
     abbrev: bool,
+    /// The candidate window's selection was moved (Ctrl+N/P): a–l then
+    /// type on instead of picking.
+    stepped: bool,
     /// SKK style: only a capital opens a part. The layer's own default
     /// (its tests are written for it); `[conversion] skk_style` sets it.
     skk_style: bool,
@@ -95,6 +98,7 @@ impl PartLayer {
             hint: PartHint::default(),
             skk_style: true,
             abbrev: false,
+            stepped: false,
             register: None,
             recent: None,
         }
@@ -240,7 +244,10 @@ impl PartLayer {
             PartMode::Plain => self.plain_key(engine, key),
             PartMode::Part => match engine.state() {
                 InputState::Conversion { .. } => self.conversion_key(engine, key),
-                _ => self.part_key(engine, key),
+                _ => {
+                    self.stepped = false;
+                    self.part_key(engine, key)
+                }
             },
         }
     }
@@ -506,13 +513,17 @@ impl PartLayer {
         if m.control_key {
             return match key.keysym {
                 Keysym::KEY_N | Keysym::KEY_N_UPPER | Keysym::KEY_I | Keysym::KEY_I_UPPER => {
+                    self.stepped = true;
                     engine.process_key(&press(Keysym::TAB))
                 }
-                Keysym::KEY_P | Keysym::KEY_P_UPPER => engine.process_key(&KeyEvent::new(
-                    Keysym::TAB,
-                    KeyModifiers::new().with_shift(true),
-                    true,
-                )),
+                Keysym::KEY_P | Keysym::KEY_P_UPPER => {
+                    self.stepped = true;
+                    engine.process_key(&KeyEvent::new(
+                        Keysym::TAB,
+                        KeyModifiers::new().with_shift(true),
+                        true,
+                    ))
+                }
                 // Ctrl+G: close the window, back to the part's composition.
                 Keysym::KEY_G | Keysym::KEY_G_UPPER => engine.process_key(&press(Keysym::ESCAPE)),
                 Keysym::KEY_R | Keysym::KEY_R_UPPER => self.start_registration(engine),
@@ -522,13 +533,22 @@ impl PartLayer {
         let Some(ch) = typed_char(key) else {
             return match key.keysym {
                 Keysym::RETURN => self.commit_conversion(engine),
+                Keysym::TAB => {
+                    self.stepped = true;
+                    engine.process_key(key)
+                }
                 _ => engine.process_key(key),
             };
         };
         if ch == 'q' {
             return self.commit_katakana(engine);
         }
-        if let Some(index) = SELECT_KEYS.find(ch).filter(|_| !key.modifiers.shift_key) {
+        // Picking by letter is for a window just opened; once the selection
+        // was stepped to, the letter types on.
+        if let Some(index) = SELECT_KEYS
+            .find(ch)
+            .filter(|_| !key.modifiers.shift_key && !self.stepped)
+        {
             let result = engine.select_candidate_on_page(index);
             if matches!(engine.state(), InputState::Empty) {
                 self.enter(engine, PartMode::Plain);
@@ -912,6 +932,22 @@ mod tests {
         feed(&mut layer, &mut engine, "/");
         layer.process_key(&mut engine, &ctrl('g'));
         assert_eq!(feed(&mut layer, &mut engine, "ka"), "か");
+    }
+
+    #[test]
+    fn after_stepping_letters_type_on() {
+        let (mut layer, mut engine) = setup();
+        feed(&mut layer, &mut engine, "Kaigi");
+        layer.process_key(&mut engine, &ctrl('n'));
+        layer.process_key(&mut engine, &ctrl('n'));
+        // `a` commits the selection (the second candidate, カイギ without
+        // a model) and types on.
+        assert_eq!(feed(&mut layer, &mut engine, "a"), "カイギあ");
+        // A window just opened still picks by letter.
+        feed(&mut layer, &mut engine, "Kaigi");
+        layer.process_key(&mut engine, &ctrl('n'));
+        assert_eq!(feed(&mut layer, &mut engine, "a"), "かいぎ");
+        assert!(matches!(engine.state(), InputState::Empty));
     }
 
     #[test]
