@@ -22,6 +22,7 @@ Honjitu no Kaigi ha  →  本日の会議は
 | かなへ戻る（開いているものは確定） | Ctrl+J / かなキー / 右⌘単独タップ |
 | 英数（直接入力）へ（開いているものは確定） | 英数キー / 左⌘単独タップ（Karabiner） |
 | 英数（直接入力）へ | `l`（かな入力中） |
+| 英字のまま変換する（SKK の abbrev） | `/` → 英字 → Space で変換 / Enter でそのまま確定 |
 | 入力中のものを捨てる | Ctrl+U |
 | 1文字消す | Backspace / Ctrl+H |
 | 確定 | Enter / Ctrl+M |
@@ -44,9 +45,10 @@ Honjitu no Kaigi ha  →  本日の会議は
 
 | 操作 | キー |
 |---|---|
-| パートを閉じて確定 | Space / Enter / `,` `.`（句読点も続けて入力される） |
+| パートを閉じて確定 | Space / Enter / `,` `.` `?` `!`（その記号も続けて入力される） |
 | 次のパートを開く（今のパートは確定） | 大文字 |
 | 候補窓を開く | Ctrl+N |
+| カタカナで確定する | `q`（候補窓を開いているときも） |
 | 以前入力した語で補完する | Tab / Ctrl+I（打った読みで始まる、過去に確定した語を候補窓に出す） |
 | 候補の出どころを絞って開く | Ctrl+T（学習→辞書→AI→記号の順） |
 | パートを取り消す | Ctrl+G / Escape |
@@ -94,11 +96,22 @@ Google 日本語入力と同じ `z` 入力が使える（zh ← / zj ↓ / zk �
 
 単語登録した語は学習キャッシュに入るので、その場で効く。`user_dicts/registered.tsv` にも追記され、次の起動からはユーザー辞書としても読まれる。
 
+## 英字のまま変換する（`/`）
+
+何も入力していないときに `/` を押すと、SKK の abbrev と同じく、▽ を出して、続く文字を英字のまま入力する（`l` `q` 大文字もそのまま入る）。Space（または Ctrl+N）で変換し、Enter で打ったとおりに確定する。Ctrl+G / Escape で取り消す。変換候補は、英字の読みを持つ辞書の語と、大文字・全角の形である。辞書の語は SKK 辞書から取り込む（次の節の `--abbrev`）。`・` は `z/` で入力する。
+
 ## SKK 辞書の取り込み
 
 ```sh
 scripts/skk2mozc.py ~/Library/Application\ Support/AquaSKK/skk-jisyo.utf8 \
     > ~/Library/Application\ Support/com.mimir.mimir-im/user_dicts/skk-user.tsv
+```
+
+英字の読みの項目（`github /GitHub/`）は `--abbrev` で取り込む。かな入力の読みとは重ならないので、SKK-JISYO.L のような大きな辞書から取り込んでよい。
+
+```sh
+scripts/skk2mozc.py --abbrev ~/Library/Application\ Support/AquaSKK/SKK-JISYO.L \
+    > ~/Library/Application\ Support/com.mimir.mimir-im/user_dicts/skk-abbrev.tsv
 ```
 
 取り込めるのは送りなしエントリだけである。ユーザー辞書の候補はモデルの候補より上に並ぶので、SKK-JISYO.L のような大きな一般辞書は入れない方がよい。
