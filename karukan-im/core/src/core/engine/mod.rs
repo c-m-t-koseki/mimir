@@ -293,6 +293,57 @@ impl InputMethodEngine {
             .with_action(EngineAction::HideAuxText)
     }
 
+    /// The kana being composed, unfired romaji included (`かいg`), while
+    /// Composing; what the live conversion stands in for.
+    pub fn composing_kana(&self) -> Option<String> {
+        matches!(self.state, InputState::Composing { .. }).then(|| self.input_buf.display())
+    }
+
+    /// Settle an unfired romaji tail (`でざい` + `n` → `でざいん`) and rerun
+    /// the live conversion over the whole reading, so a commit right after
+    /// converts `でざいん`, not `でざい` with a raw `ん` glued on.
+    pub fn settle_pending(&mut self) {
+        if self.has_pending_romaji() && matches!(self.state, InputState::Composing { .. }) {
+            self.settle_romaji();
+            self.refresh_input_state();
+        }
+    }
+
+    /// Readings from the history that extend the typed one — what Tab
+    /// would offer — best first, at most `limit`.
+    pub fn completions(&self, limit: usize) -> Vec<String> {
+        if !matches!(self.state, InputState::Composing { .. }) {
+            return Vec::new();
+        }
+        let base = self.input_buf.settled_reading(&self.converters.romaji);
+        self.lookup_learning_history(&base, "")
+            .into_iter()
+            // Longer readings only, and actual conversions: a kana phrase
+            // committed as typed completes to nothing worth a hint.
+            .filter(|c| {
+                c.reading
+                    .as_deref()
+                    .is_some_and(|r| r != base && r != c.text)
+            })
+            .map(|c| c.text)
+            .take(limit)
+            .collect()
+    }
+
+    /// Tab / Ctrl+I in a part: complete the reading from what was committed
+    /// before — the learning history view, readings extending the typed one
+    /// included. Does nothing when the history has no match.
+    pub fn open_completions(&mut self) -> EngineResult {
+        if !matches!(self.state, InputState::Composing { .. }) {
+            return EngineResult::consumed();
+        }
+        let base = self.input_buf.settled_reading(&self.converters.romaji);
+        if self.lookup_learning_history(&base, "").is_empty() {
+            return EngineResult::consumed();
+        }
+        self.jump_to_source(CandidateSource::Learning)
+    }
+
     /// End the composition without committing, returning its kana reading
     /// (the word-registration flow takes the reading, then asks for the word).
     pub fn take_reading(&mut self) -> String {

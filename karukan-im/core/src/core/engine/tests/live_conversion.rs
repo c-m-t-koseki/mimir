@@ -468,3 +468,17 @@ fn test_ctrl_shift_l_shows_aux_text() {
     );
     assert!(has_aux);
 }
+
+#[test]
+fn test_settle_pending_reconverts_with_the_tail() {
+    // でざい + unfired `n`: committing must convert でざいん as a whole, not
+    // glue a raw ん onto デザイ (which made `nn` necessary before `、`).
+    let mut engine = make_live_conversion_engine();
+    seed_model_cache(&mut engine, "デザイ", "", &["デザイ"]);
+    seed_model_cache(&mut engine, "デザイン", "", &["デザイン"]);
+    for ch in "dezain".chars() {
+        engine.process_key(&press(ch));
+    }
+    engine.settle_pending();
+    assert_eq!(engine.commit(), "デザイン");
+}

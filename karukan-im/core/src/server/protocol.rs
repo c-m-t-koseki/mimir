@@ -140,6 +140,13 @@ pub struct KeyResult {
     pub conversion_ms: u64,
     /// End-to-end engine processing time for this request in milliseconds.
     pub process_key_ms: u64,
+    /// Input mode after this request: "kana" or "ascii" (the frontend shows
+    /// a badge when it changes).
+    pub mode: &'static str,
+    /// Text for the panel under an open kanji part (`[display] part_hint`:
+    /// completions or the reading); absent when there is nothing to show.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hint: Option<String>,
 }
 
 #[derive(Debug, Serialize)]

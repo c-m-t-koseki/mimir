@@ -33,6 +33,12 @@ const CONTEXT_WEIGHT: f64 = 10.0;
 /// Separates contexts in the TSV column (never typed as text).
 const CONTEXT_SEP: char = '\u{1f}';
 
+/// A reading with latin letters still holds keystrokes that never became
+/// kana (`s`, `でざいn`): a commit cut mid-syllable, never a word to learn.
+fn has_unfired_romaji(reading: &str) -> bool {
+    reading.chars().any(|c| c.is_ascii_alphabetic())
+}
+
 fn context_tail(lctx: &str) -> String {
     let chars: Vec<char> = lctx
         .chars()
@@ -131,7 +137,7 @@ impl LearningCache {
     /// [`Self::record`], remembering the left context the surface was
     /// committed after, so [`Self::lookup_with_context`] can prefer it there.
     pub fn record_with_context(&mut self, reading: &str, surface: &str, lctx: &str) {
-        if surface.chars().count() > self.max_surface_chars {
+        if surface.chars().count() > self.max_surface_chars || has_unfired_romaji(reading) {
             return;
         }
         let now = now_unix();
@@ -206,6 +212,32 @@ impl LearningCache {
         scored
     }
 
+    /// The best surface for `reading` among those committed after a left
+    /// context sharing at least `min_shared` trailing chars with `lctx` —
+    /// learning strong enough to override a context-aware model. `None`
+    /// when nothing was learned in a context like this one.
+    pub fn lookup_in_context(
+        &self,
+        reading: &str,
+        lctx: &str,
+        min_shared: usize,
+    ) -> Option<String> {
+        let now = now_unix();
+        self.entries
+            .get(reading)?
+            .iter()
+            .filter(|e| {
+                e.contexts
+                    .iter()
+                    .any(|c| common_suffix_len(c, lctx) >= min_shared)
+            })
+            .max_by(|a, b| {
+                let score = |e: &LearningEntry| score(e, now) + e.context_bonus(lctx);
+                score(a).total_cmp(&score(b))
+            })
+            .map(|e| e.surface.clone())
+    }
+
     /// Prefix-match lookup: returns `(reading, surface, score)` triples
     /// for all readings that start with `prefix`, sorted by score descending.
     pub fn prefix_lookup(&self, prefix: &str) -> Vec<(String, String, f64)> {
@@ -243,6 +275,9 @@ impl LearningCache {
             }
             let reading = parts[0];
             let surface = parts[1];
+            if has_unfired_romaji(reading) {
+                continue;
+            }
             let frequency: u32 = match parts[2].parse() {
                 Ok(v) => v,
                 Err(_) => continue,
@@ -705,5 +740,35 @@ mod tests {
         cache.save(&path).unwrap();
         let loaded = LearningCache::load(&path, LearningConfig::default()).unwrap();
         assert_eq!(loaded.lookup_with_context("かいぎ", "本日の")[0].0, "会議");
+    }
+
+    #[test]
+    fn test_lookup_in_context_needs_a_matching_context() {
+        let mut cache = LearningCache::new(LearningConfig::default());
+        cache.record_with_context("ちゅう", "中", "なっている。入力");
+        cache.record_with_context("ちゅう", "注", "しているときに、");
+        assert_eq!(
+            cache
+                .lookup_in_context("ちゅう", "文字を入力", 2)
+                .as_deref(),
+            Some("中")
+        );
+        // A different context: leave it to the model, however recent 注 is.
+        assert_eq!(cache.lookup_in_context("ちゅう", "かっこ「", 2), None);
+        assert_eq!(cache.lookup_in_context("ちゅう", "", 2), None);
+    }
+
+    #[test]
+    fn test_unfired_romaji_is_never_learned() {
+        let mut cache = LearningCache::new(LearningConfig::default());
+        cache.record("s", "s");
+        cache.record("でざいn", "デザイn");
+        assert_eq!(cache.entry_count(), 0);
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("learning.tsv");
+        std::fs::write(&path, "でざいn\tデザイn\t3\t0\nでざいん\tデザイン\t1\t0\n").unwrap();
+        let loaded = LearningCache::load(&path, LearningConfig::default()).unwrap();
+        assert_eq!(loaded.entry_count(), 1);
     }
 }

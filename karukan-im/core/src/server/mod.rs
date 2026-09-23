@@ -12,7 +12,7 @@ use crate::config::Settings;
 use crate::core::candidate::CandidateList;
 use crate::core::engine::{EngineAction, EngineConfig, EngineResult, InputMethodEngine};
 use crate::core::keycode::{KeyEvent, Keysym};
-use crate::core::part::PartLayer;
+use crate::core::part::{PartLayer, PartMode};
 use crate::core::state::InputState;
 
 use protocol::{
@@ -49,7 +49,7 @@ impl ImServer {
     pub fn with_settings(settings: Settings) -> Self {
         let config = EngineConfig::from_settings(&settings);
         let mut engine = InputMethodEngine::with_config(config);
-        let mut part = PartLayer::new();
+        let mut part = PartLayer::with_hint(settings.display.part_hint);
         part.attach(&mut engine);
         Self {
             engine,
@@ -176,6 +176,11 @@ impl ImServer {
             actions,
             conversion_ms: self.engine.last_conversion_ms(),
             process_key_ms: self.engine.last_process_key_ms(),
+            mode: match self.part.mode() {
+                PartMode::Ascii => "ascii",
+                PartMode::Plain | PartMode::Part => "kana",
+            },
+            hint: self.part.hint(&self.engine),
         })
         .map_err(internal_error)
     }

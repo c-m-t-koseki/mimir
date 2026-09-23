@@ -1,7 +1,7 @@
 //! Kanji-part input layer: an explicit conversion span in front of the engine.
 //!
 //! Kana input is plain hiragana, committed as soon as each kana fires. A
-//! capital letter (Shift+letter, i.e. SandS) or `q` opens a *kanji part*,
+//! capital letter (Shift+letter, i.e. SandS) opens a *kanji part*,
 //! which the engine live-converts; a bare Space closes it (commit), after
 //! which typing is plain hiragana again. `l` switches to direct ASCII input
 //! and Ctrl+J returns to kana, as in SKK.
@@ -20,6 +20,10 @@ use super::keycode::{KeyEvent, KeyModifiers, Keysym};
 use super::preedit::Preedit;
 use super::state::InputState;
 use crate::config::Settings;
+use crate::config::settings::PartHint;
+
+/// Completions listed in the hint panel.
+const HINT_COMPLETIONS: usize = 3;
 
 /// Keys that pick a candidate from the open window, in page order.
 pub const SELECT_KEYS: &str = "asdfjkl";
@@ -36,6 +40,8 @@ pub enum PartMode {
 
 pub struct PartLayer {
     mode: PartMode,
+    /// What [`Self::hint`] reports while a part is typed.
+    hint: PartHint,
     /// Word registration in progress: the reading and the word so far.
     register: Option<Registration>,
 }
@@ -69,7 +75,15 @@ impl PartLayer {
     pub fn new() -> Self {
         Self {
             mode: PartMode::Plain,
+            hint: PartHint::default(),
             register: None,
+        }
+    }
+
+    pub fn with_hint(hint: PartHint) -> Self {
+        Self {
+            hint,
+            ..Self::new()
         }
     }
 
@@ -88,10 +102,66 @@ impl PartLayer {
     }
 
     pub fn process_key(&mut self, engine: &mut InputMethodEngine, key: &KeyEvent) -> EngineResult {
+        let key = &emacs_alias(key);
         if self.register.is_some() && key.is_press && !key.keysym.is_modifier() {
             return self.registration_key(engine, key);
         }
-        self.dispatch(engine, key)
+        let composing = !matches!(engine.state(), InputState::Empty);
+        let ctrl = key.is_press && key.modifiers.control_key && !key.modifiers.alt_key;
+        // Nothing composing: every Ctrl chord but our own Ctrl+J belongs to
+        // the application (Ctrl+U kills the line, Ctrl+K kills to its end…),
+        // so it never reaches the engine and its bindings.
+        let ctrl_j = matches!(key.keysym, Keysym::KEY_J | Keysym::KEY_J_UPPER);
+        if !composing && ctrl && !ctrl_j {
+            return EngineResult::not_consumed();
+        }
+        if composing && ctrl && matches!(key.keysym, Keysym::KEY_U | Keysym::KEY_U_UPPER) {
+            return self.discard(engine);
+        }
+        let result = self.dispatch(engine, key);
+        let mut result = plain_aux(engine, result);
+        // A Ctrl chord the engine leaves unbound must not reach the
+        // application mid-composition: its text edit (Ctrl+K, Ctrl+W, …)
+        // would act on the marked text behind the engine's back, and the
+        // next keystroke would redraw what it deleted.
+        if composing && ctrl && self.mode != PartMode::Ascii {
+            result.consumed = true;
+        }
+        result
+    }
+
+    /// Ctrl+U: drop what is being composed (readline's kill-line), part
+    /// and all, back to plain kana.
+    fn discard(&mut self, engine: &mut InputMethodEngine) -> EngineResult {
+        engine.take_reading();
+        if self.mode == PartMode::Part {
+            self.enter(engine, PartMode::Plain);
+        }
+        EngineResult::consumed()
+            .with_action(EngineAction::UpdatePreedit(Preedit::new()))
+            .with_action(EngineAction::HideCandidates)
+            .with_action(EngineAction::HideAuxText)
+    }
+
+    /// Text for the small panel under an open part (`[display] part_hint`):
+    /// earlier-committed words the reading completes to, or the kana under
+    /// the live conversion when it differs from the preedit.
+    pub fn hint(&self, engine: &InputMethodEngine) -> Option<String> {
+        if self.mode != PartMode::Part || self.register.is_some() {
+            return None;
+        }
+        match self.hint {
+            PartHint::None => None,
+            PartHint::Completion => {
+                let words = engine.completions(HINT_COMPLETIONS);
+                (!words.is_empty()).then(|| words.join("  "))
+            }
+            PartHint::Reading => {
+                let kana = engine.composing_kana()?;
+                let shown = engine.preedit().map(|p| p.text().to_string());
+                (shown.as_deref() != Some(kana.as_str())).then_some(kana)
+            }
+        }
     }
 
     fn dispatch(&mut self, engine: &mut InputMethodEngine, key: &KeyEvent) -> EngineResult {
@@ -108,7 +178,18 @@ impl PartLayer {
         if ctrl_j || key.keysym.is_mode_toggle_key() {
             let result = self.close(engine);
             self.enter(engine, PartMode::Plain);
+            // Also leave the engine's own katakana mode (Ctrl+K).
+            engine.process_key(&press(Keysym::SUPER_R));
             return merge(EngineResult::consumed(), result);
+        }
+
+        // No katakana mode: Ctrl+K is the application's (kill-line) unless
+        // something is composing.
+        if m.control_key && matches!(key.keysym, Keysym::KEY_K | Keysym::KEY_K_UPPER) {
+            return match (self.mode, engine.state()) {
+                (PartMode::Ascii, _) | (_, InputState::Empty) => EngineResult::not_consumed(),
+                _ => EngineResult::consumed(),
+            };
         }
 
         match self.mode {
@@ -139,7 +220,10 @@ impl PartLayer {
     fn close(&mut self, engine: &mut InputMethodEngine) -> EngineResult {
         match (self.mode, engine.state()) {
             (_, InputState::Empty) => EngineResult::consumed(),
-            (PartMode::Part, _) => engine.commit_result(),
+            (PartMode::Part, _) => {
+                engine.settle_pending();
+                engine.commit_result()
+            }
             _ => engine.commit_plain_result(),
         }
     }
@@ -197,11 +281,15 @@ impl PartLayer {
                 }
                 Keysym::KEY_G | Keysym::KEY_G_UPPER => self.cancel_part(engine),
                 Keysym::KEY_R | Keysym::KEY_R_UPPER => self.start_registration(engine),
+                Keysym::KEY_I | Keysym::KEY_I_UPPER => engine.open_completions(),
                 _ => engine.process_key(key),
             };
         }
         let Some(ch) = typed_char(key) else {
             return match key.keysym {
+                // Tab and Ctrl+I are the same key (and the same thing):
+                // complete from what was typed before.
+                Keysym::TAB => engine.open_completions(),
                 Keysym::RETURN => {
                     let result = self.close(engine);
                     self.enter(engine, PartMode::Plain);
@@ -217,6 +305,14 @@ impl PartLayer {
             return result;
         }
         if let Some(first) = part_opener(key, ch) {
+            // A capital in the middle of a syllable (`s` + `E`) is SandS
+            // rolling over — Space still held when the next key lands — not
+            // a new part: nothing ever ends a part on an unfired consonant.
+            if engine.has_pending_romaji()
+                && let Some(ch) = first
+            {
+                return engine.process_key(&press_char(ch));
+            }
             return self.start_part(engine, first);
         }
         if ch == 'l' {
@@ -251,7 +347,9 @@ impl PartLayer {
         let m = key.modifiers;
         if m.control_key {
             return match key.keysym {
-                Keysym::KEY_N | Keysym::KEY_N_UPPER => engine.process_key(&press(Keysym::TAB)),
+                Keysym::KEY_N | Keysym::KEY_N_UPPER | Keysym::KEY_I | Keysym::KEY_I_UPPER => {
+                    engine.process_key(&press(Keysym::TAB))
+                }
                 Keysym::KEY_P | Keysym::KEY_P_UPPER => engine.process_key(&KeyEvent::new(
                     Keysym::TAB,
                     KeyModifiers::new().with_shift(true),
@@ -405,6 +503,23 @@ fn save_registered(reading: &str, word: &str) {
     }
 }
 
+/// Ctrl+H is Backspace and Ctrl+M is Enter, as in SKK and the Cocoa text
+/// system. Unmapped, the engine would pass Ctrl+H to the application, which
+/// deletes inside the marked text behind the engine's back — the next
+/// keystroke then redraws the preedit and the deleted chars come back.
+fn emacs_alias(key: &KeyEvent) -> KeyEvent {
+    let m = key.modifiers;
+    if !m.control_key || m.alt_key || m.super_key {
+        return key.clone();
+    }
+    let keysym = match key.keysym.0 {
+        0x68 | 0x48 => Keysym::BACKSPACE,
+        0x6d | 0x4d => Keysym::RETURN,
+        _ => return key.clone(),
+    };
+    KeyEvent::new(keysym, KeyModifiers::default(), key.is_press)
+}
+
 /// The printable character a key types, ignoring Ctrl chords.
 fn typed_char(key: &KeyEvent) -> Option<char> {
     if key.modifiers.control_key {
@@ -413,13 +528,34 @@ fn typed_char(key: &KeyEvent) -> Option<char> {
     key.to_char()
 }
 
-/// `Some(first)` when the key opens a kanji part: a capital (fed lowercased)
-/// or `q` (feeds nothing).
+/// `Some(first)` when the key opens a kanji part: a capital, fed lowercased.
 fn part_opener(key: &KeyEvent, ch: char) -> Option<Option<char>> {
-    if ch.is_ascii_uppercase() || (key.modifiers.shift_key && ch.is_ascii_lowercase()) {
-        return Some(Some(ch.to_ascii_lowercase()));
+    (ch.is_ascii_uppercase() || (key.modifiers.shift_key && ch.is_ascii_lowercase()))
+        .then(|| Some(ch.to_ascii_lowercase()))
+}
+
+/// The engine's aux line carries mode and source markers (`[あ][変換:🤖]`,
+/// chunk counters); the candidate window shows just the reading instead.
+fn plain_aux(engine: &InputMethodEngine, mut result: EngineResult) -> EngineResult {
+    let had_aux = result.actions.iter().any(|a| {
+        matches!(
+            a,
+            EngineAction::UpdateAuxText(_) | EngineAction::HideAuxText
+        )
+    });
+    result.actions.retain(|a| {
+        !matches!(
+            a,
+            EngineAction::UpdateAuxText(_) | EngineAction::HideAuxText
+        )
+    });
+    if had_aux {
+        result.actions.push(match engine.state() {
+            InputState::Conversion { reading, .. } => EngineAction::UpdateAuxText(reading.clone()),
+            _ => EngineAction::HideAuxText,
+        });
     }
-    (ch == 'q').then_some(None)
+    result
 }
 
 fn without_suggestions(mut result: EngineResult) -> EngineResult {
@@ -485,10 +621,17 @@ mod tests {
     }
 
     #[test]
-    fn q_opens_part_and_capital_chains_parts() {
+    fn capital_chains_parts() {
         let (mut layer, mut engine) = setup();
-        assert_eq!(feed(&mut layer, &mut engine, "qhonjitu"), "");
+        assert_eq!(feed(&mut layer, &mut engine, "Honjitu"), "");
         assert_eq!(feed(&mut layer, &mut engine, "Kaigi "), "ほんじつかいぎ");
+    }
+
+    #[test]
+    fn ctrl_k_is_not_katakana() {
+        let (mut layer, mut engine) = setup();
+        assert!(!layer.process_key(&mut engine, &ctrl('k')).consumed);
+        assert_eq!(feed(&mut layer, &mut engine, "ka"), "か");
     }
 
     #[test]
@@ -540,6 +683,75 @@ mod tests {
             enter.actions.as_slice(),
             [EngineAction::Commit(word)] if word == "karukanいめ"
         ));
+    }
+
+    fn ctrl(ch: char) -> KeyEvent {
+        KeyEvent::new(
+            Keysym(ch as u32),
+            KeyModifiers {
+                control_key: true,
+                ..Default::default()
+            },
+            true,
+        )
+    }
+
+    #[test]
+    fn sands_rollover_capital_continues_the_syllable() {
+        let (mut layer, mut engine) = setup();
+        // Space+s, then `e` while Space is still down: `SE`, meant `Se`.
+        assert_eq!(feed(&mut layer, &mut engine, "SE"), "");
+        assert_eq!(engine.preedit().unwrap().text(), "せ");
+        // A capital after a whole kana still opens the next part.
+        assert_eq!(feed(&mut layer, &mut engine, "Ki "), "せき");
+    }
+
+    #[test]
+    fn ctrl_h_deletes_inside_the_part() {
+        let (mut layer, mut engine) = setup();
+        feed(&mut layer, &mut engine, "Kaigi");
+        let result = layer.process_key(&mut engine, &ctrl('h'));
+        assert!(result.consumed);
+        assert_eq!(engine.preedit().unwrap().text(), "かい");
+        // Plain mode with nothing composing leaves Ctrl+H to the app.
+        feed(&mut layer, &mut engine, " ");
+        assert!(!layer.process_key(&mut engine, &ctrl('h')).consumed);
+    }
+
+    #[test]
+    fn conversion_aux_is_just_the_reading() {
+        let (mut layer, mut engine) = setup();
+        feed(&mut layer, &mut engine, "Kaigi");
+        let result = layer.process_key(&mut engine, &ctrl('n'));
+        let aux: Vec<_> = result
+            .actions
+            .iter()
+            .filter_map(|a| match a {
+                EngineAction::UpdateAuxText(t) => Some(t.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(aux, ["かいぎ"]);
+        // No model: the preedit is the kana itself, nothing to show beside it.
+        layer.process_key(&mut engine, &ctrl('g'));
+        layer.hint = PartHint::Reading;
+        assert_eq!(layer.hint(&engine), None);
+    }
+
+    #[test]
+    fn ctrl_u_discards_the_composition() {
+        let (mut layer, mut engine) = setup();
+        feed(&mut layer, &mut engine, "Kaigi");
+        let result = layer.process_key(&mut engine, &ctrl('u'));
+        assert!(result.consumed);
+        assert!(matches!(engine.state(), InputState::Empty));
+        assert_eq!(layer.mode(), PartMode::Plain);
+        // Nothing composing: Ctrl+U is the application's again.
+        assert!(!layer.process_key(&mut engine, &ctrl('u')).consumed);
+        // Other unbound chords are swallowed while composing.
+        feed(&mut layer, &mut engine, "Kai");
+        assert!(layer.process_key(&mut engine, &ctrl('w')).consumed);
+        assert_eq!(engine.preedit().unwrap().text(), "かい");
     }
 
     #[test]
