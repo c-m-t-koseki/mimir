@@ -54,15 +54,7 @@ impl ImServer {
     pub fn with_settings(settings: Settings) -> Self {
         let config = EngineConfig::from_settings(&settings);
         let mut engine = InputMethodEngine::with_config(config);
-        let mut part = PartLayer::with_hint(settings.display.part_hint)
-            .with_skk_style(settings.conversion.skk_style)
-            .with_keys(Keymap::parse(&settings.keys).unwrap_or_default())
-            .with_reading_display(
-                settings.display.reading_display,
-                settings.display.tail_chars,
-                settings.display.tail_delay_ms,
-                settings.display.tail_delete_delay_ms,
-            );
+        let mut part = part_layer(&settings);
         part.attach(&mut engine);
         Self {
             engine,
@@ -181,7 +173,15 @@ impl ImServer {
                 };
                 Settings::set_value(&params.section, &params.key, value)
                     .map_err(|e| RpcError::new(RpcError::INVALID_PARAMS, format!("{e:#}")))?;
-                Ok(json!({}))
+                if !applies_live(&params.section, &params.key) {
+                    return Ok(json!({"restart": true}));
+                }
+                let settings = Settings::load_or_default();
+                self.part.flush(&mut self.engine);
+                self.part = part_layer(&settings);
+                self.part.attach(&mut self.engine);
+                self.candidate_layout = settings.display.candidate_layout;
+                Ok(json!({"restart": false}))
             }
             "learning_list" => {
                 let entries: Vec<_> = self
@@ -272,6 +272,39 @@ impl ImServer {
             refresh_ms: self.part.refresh_after_ms(&self.engine),
         })
         .map_err(internal_error)
+    }
+}
+
+/// The part layer as `settings` configure it.
+fn part_layer(settings: &Settings) -> PartLayer {
+    PartLayer::with_hint(settings.display.part_hint)
+        .with_skk_style(settings.conversion.skk_style)
+        .with_keys(Keymap::parse(&settings.keys).unwrap_or_default())
+        .with_reading_display(
+            settings.display.reading_display,
+            settings.display.tail_chars,
+            settings.display.tail_delay_ms,
+            settings.display.tail_delete_delay_ms,
+        )
+}
+
+/// Settings only the part layer and the key results read: `set_config`
+/// applies them at once, where anything else waits for an engine restart
+/// (models and dictionaries load at `init`).
+fn applies_live(section: &str, key: &str) -> bool {
+    match section {
+        "keys" => true,
+        "display" => matches!(
+            key,
+            "part_hint"
+                | "reading_display"
+                | "tail_chars"
+                | "tail_delay_ms"
+                | "tail_delete_delay_ms"
+                | "candidate_layout"
+        ),
+        "conversion" => key == "skk_style",
+        _ => false,
     }
 }
 
