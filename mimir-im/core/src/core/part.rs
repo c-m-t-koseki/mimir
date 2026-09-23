@@ -36,9 +36,6 @@ use crate::config::settings::{PartHint, ReadingDisplay};
 /// Longest committed text a one-char part is joined to for learning.
 const RECENT_MAX_CHARS: usize = 12;
 
-/// `ReadingDisplay::Tail`: how long typing pauses before the tail converts.
-const REFRESH_AFTER_MS: u64 = 400;
-
 /// Completions listed in the hint panel.
 const HINT_COMPLETIONS: usize = 3;
 
@@ -74,6 +71,8 @@ pub struct PartLayer {
     reading_display: ReadingDisplay,
     /// `ReadingDisplay::Tail`: typed chars that stay kana.
     tail_chars: usize,
+    /// `ReadingDisplay::Tail`: the pause before they convert too.
+    tail_delay_ms: u64,
     /// Typing paused (`refresh`): the tail shows converted too.
     settled: bool,
     /// SKK style: only a capital opens a part. The layer's own default
@@ -122,7 +121,8 @@ impl PartLayer {
             split: None,
             stepped: false,
             reading_display: ReadingDisplay::None,
-            tail_chars: 2,
+            tail_chars: 1,
+            tail_delay_ms: 250,
             settled: false,
             register: None,
             recent: None,
@@ -136,12 +136,30 @@ impl PartLayer {
         }
     }
 
-    pub fn with_reading_display(self, reading_display: ReadingDisplay, tail_chars: usize) -> Self {
+    pub fn with_reading_display(
+        self,
+        reading_display: ReadingDisplay,
+        tail_chars: usize,
+        tail_delay_ms: u64,
+    ) -> Self {
         Self {
             reading_display,
             tail_chars,
+            tail_delay_ms,
             ..self
         }
+    }
+
+    /// Whether the preedit holds its typed tail back in kana now: only
+    /// right after a kana fired — an unfired consonant (規定 + d) keeps the
+    /// conversion as it was.
+    fn holds_tail(&self, engine: &InputMethodEngine) -> bool {
+        self.reading_display == ReadingDisplay::Tail
+            && !self.settled
+            && self.split.is_none()
+            && self.mode == PartMode::Part
+            && composing(engine)
+            && !engine.has_pending_romaji()
     }
 
     pub fn with_skk_style(self, skk_style: bool) -> Self {
@@ -217,11 +235,7 @@ impl PartLayer {
             return;
         }
         let live = self.mode == PartMode::Part && composing(engine);
-        let tail_kana = live
-            && self.split.is_none()
-            && !self.settled
-            && self.reading_display == ReadingDisplay::Tail;
-        if tail_kana {
+        if self.holds_tail(engine) {
             let reading = engine.reading();
             for action in &mut result.actions {
                 if let EngineAction::UpdatePreedit(preedit) = action
@@ -281,12 +295,7 @@ impl PartLayer {
     /// When the frontend should call [`Self::refresh`]: after this long
     /// without a key, while a kana tail is held back.
     pub fn refresh_after_ms(&self, engine: &InputMethodEngine) -> Option<u64> {
-        (self.reading_display == ReadingDisplay::Tail
-            && !self.settled
-            && self.split.is_none()
-            && self.mode == PartMode::Part
-            && composing(engine))
-        .then_some(REFRESH_AFTER_MS)
+        self.holds_tail(engine).then_some(self.tail_delay_ms)
     }
 
     /// `ReadingDisplay::Ruby`: the last kanji run of the preedit — its span
