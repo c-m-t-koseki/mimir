@@ -75,6 +75,14 @@ impl InputMethodEngine {
             settings.conversion.strategy,
         );
 
+        self.init_data_from_settings(settings);
+        self.spawn_model_loading(settings);
+        Ok(())
+    }
+
+    /// Everything [`Self::init_from_settings`] sets up but the models: the
+    /// dictionaries and the learning cache.
+    pub fn init_data_from_settings(&mut self, settings: &Settings) {
         self.init_system_dictionary(settings.conversion.dict_path.as_deref());
         self.init_user_dictionaries();
         self.init_learning_cache(
@@ -85,9 +93,6 @@ impl InputMethodEngine {
                 min_surface_chars: settings.learning.min_surface_chars,
             },
         );
-
-        self.spawn_model_loading(settings);
-        Ok(())
     }
 
     /// Load the conversion models on a background thread; never blocks.

@@ -97,7 +97,12 @@ impl ImServer {
 
     fn dispatch(&mut self, method: &str, params: Value) -> Result<Value, RpcError> {
         match method {
-            "init" => self.handle_init(),
+            "init" => {
+                // `models: false` for an engine that only edits settings and
+                // learning (the Windows settings window): no model load.
+                let models = params.get("models").and_then(Value::as_bool);
+                self.handle_init(models.unwrap_or(true))
+            }
             "process_key" => {
                 let params: ProcessKeyParams = parse_params(params)?;
                 let event =
@@ -249,13 +254,19 @@ impl ImServer {
         }
     }
 
-    fn handle_init(&mut self) -> Result<Value, RpcError> {
+    fn handle_init(&mut self, models: bool) -> Result<Value, RpcError> {
         if !self.initialized {
             let settings = self
                 .settings
                 .take()
                 .unwrap_or_else(Settings::load_or_default);
-            if let Err(e) = self.engine.init_from_settings(&settings) {
+            let result = if models {
+                self.engine.init_from_settings(&settings)
+            } else {
+                self.engine.init_data_from_settings(&settings);
+                Ok(())
+            };
+            if let Err(e) = result {
                 // Keep the settings so a retried `init` uses the same ones.
                 self.settings = Some(settings);
                 return Err(RpcError::new(RpcError::INIT_FAILED, format!("{e:#}")));
