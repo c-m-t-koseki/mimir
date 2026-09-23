@@ -938,13 +938,7 @@ impl InputMethodEngine {
 
     /// The learning history as `(reading, surface, frequency, last_access)`.
     pub fn learning_entries(&self) -> Vec<(String, String, u32, u64)> {
-        self.learning.as_ref().map_or_else(Vec::new, |cache| {
-            cache
-                .entries()
-                .into_iter()
-                .map(|(r, e)| (r.to_string(), e.surface.clone(), e.frequency, e.last_access))
-                .collect()
-        })
+        cache_entries(&self.learning)
     }
 
     /// Forget one learned conversion, saving right away.
@@ -960,6 +954,30 @@ impl InputMethodEngine {
     /// Forget every learned conversion, saving right away.
     pub fn learning_clear(&mut self) {
         if let Some(cache) = &mut self.learning {
+            cache.clear();
+        }
+        self.save_learning();
+    }
+
+    /// The completion history, shaped like [`Self::learning_entries`].
+    pub fn history_entries(&self) -> Vec<(String, String, u32, u64)> {
+        cache_entries(&self.history)
+    }
+
+    /// Forget one committed conversion from the completion history, saving
+    /// right away.
+    pub fn history_remove(&mut self, reading: &str, surface: &str) -> bool {
+        let removed = self
+            .history
+            .as_mut()
+            .is_some_and(|cache| cache.remove(reading, surface));
+        self.save_learning();
+        removed
+    }
+
+    /// Forget the whole completion history, saving right away.
+    pub fn history_clear(&mut self) {
+        if let Some(cache) = &mut self.history {
             cache.clear();
         }
         self.save_learning();
@@ -983,6 +1001,16 @@ impl InputMethodEngine {
             }
         }
     }
+}
+
+fn cache_entries(cache: &Option<LearningCache>) -> Vec<(String, String, u32, u64)> {
+    cache.as_ref().map_or_else(Vec::new, |cache| {
+        cache
+            .entries()
+            .into_iter()
+            .map(|(r, e)| (r.to_string(), e.surface.clone(), e.frequency, e.last_access))
+            .collect()
+    })
 }
 
 impl Default for InputMethodEngine {
