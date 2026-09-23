@@ -405,17 +405,24 @@ impl InputMethodEngine {
     ///
     /// Returns candidates from the learning cache suitable for auto-suggest display.
     pub(super) fn lookup_learning_candidates(&self, reading: &str) -> Vec<Candidate> {
-        self.lookup_learning(reading, "", MAX_LEARNING_CANDIDATES)
+        self.lookup_learning(reading, "", MAX_LEARNING_CANDIDATES, self.config.predictive)
     }
 
     /// Full learning history for `reading` (exact + prefix, uncapped),
     /// narrowed by the unresolved romaji tail like the dictionary lookup —
-    /// an exact hit on the base must not swallow the typed tail.
+    /// an exact hit on the base must not swallow the typed tail. Always
+    /// predictive: completing from history is what this view is for.
     pub(super) fn lookup_learning_history(&self, reading: &str, pending: &str) -> Vec<Candidate> {
-        self.lookup_learning(reading, pending, usize::MAX)
+        self.lookup_learning(reading, pending, usize::MAX, true)
     }
 
-    fn lookup_learning(&self, reading: &str, pending: &str, max: usize) -> Vec<Candidate> {
+    fn lookup_learning(
+        &self,
+        reading: &str,
+        pending: &str,
+        max: usize,
+        predictive: bool,
+    ) -> Vec<Candidate> {
         let Some(cache) = &self.learning else {
             return vec![];
         };
@@ -447,7 +454,7 @@ impl InputMethodEngine {
 
         // Prefix match (predictive), narrowed to the kana the tail can
         // still become — mirrors the dictionary's expanded search
-        let predictions = if self.config.predictive {
+        let predictions = if predictive {
             cache.prefix_lookup(reading)
         } else {
             Vec::new()

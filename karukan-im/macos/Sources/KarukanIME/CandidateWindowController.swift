@@ -312,24 +312,46 @@ class ModeBadgeController {
     }
 }
 
-/// The kana under the live conversion, in small type just below the
+/// The kana under the live conversion, set like the candidate window's
+/// header — semibold, flush left, a 2pt rule beneath — just below the
 /// preedit: 会議 in the text, かいぎ under it.
+final class ReadingView: NSView {
+    var text = "" {
+        didSet { needsDisplay = true }
+    }
+    private let pad = Swiss.grid * 2
+
+    override var isFlipped: Bool { true }
+
+    func fittingContentSize() -> NSSize {
+        let w = (text as NSString).size(withAttributes: [.font: Swiss.headFont]).width
+        return NSSize(width: ceil(w) + pad * 2, height: Swiss.grid * 4)
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        (text as NSString).draw(
+            at: NSPoint(x: pad, y: Swiss.grid),
+            withAttributes: [.font: Swiss.headFont, .foregroundColor: NSColor.labelColor])
+        NSColor.labelColor.setFill()
+        NSRect(x: pad, y: Swiss.grid * 3, width: bounds.width - pad * 2, height: 2).fill()
+    }
+}
+
 class ReadingPanelController {
     private let panel = Swiss.panel()
-    private let label = NSTextField(labelWithString: "")
+    private let view = ReadingView()
 
     init() {
         let box = Swiss.box()
         panel.contentView = box
-        label.font = NSFont.systemFont(ofSize: 13)
-        label.textColor = .secondaryLabelColor
-        label.translatesAutoresizingMaskIntoConstraints = false
+        view.translatesAutoresizingMaskIntoConstraints = false
         let content = box.contentView!
-        content.addSubview(label)
+        content.addSubview(view)
         NSLayoutConstraint.activate([
-            label.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: Swiss.grid),
-            label.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -Swiss.grid),
-            label.centerYAnchor.constraint(equalTo: content.centerYAnchor),
+            view.topAnchor.constraint(equalTo: content.topAnchor),
+            view.leadingAnchor.constraint(equalTo: content.leadingAnchor),
+            view.trailingAnchor.constraint(equalTo: content.trailingAnchor),
+            view.bottomAnchor.constraint(equalTo: content.bottomAnchor),
         ])
     }
 
@@ -338,8 +360,8 @@ class ReadingPanelController {
     /// `cursorRect: nil` keeps the panel where it is (the anchor doesn't
     /// move while a part is being typed).
     func show(_ text: String, cursorRect: NSRect?) {
-        label.stringValue = text
-        let size = NSSize(width: label.fittingSize.width + Swiss.grid * 2, height: Swiss.grid * 3)
+        view.text = text
+        let size = view.fittingContentSize()
         var origin = panel.frame.origin
         if let rect = cursorRect {
             origin =

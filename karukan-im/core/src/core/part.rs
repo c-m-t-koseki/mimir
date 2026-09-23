@@ -1,7 +1,7 @@
 //! Kanji-part input layer: an explicit conversion span in front of the engine.
 //!
 //! Kana input is plain hiragana, committed as soon as each kana fires. A
-//! capital letter (Shift+letter, i.e. SandS) or `q` opens a *kanji part*,
+//! capital letter (Shift+letter, i.e. SandS) opens a *kanji part*,
 //! which the engine live-converts; a bare Space closes it (commit), after
 //! which typing is plain hiragana again. `l` switches to direct ASCII input
 //! and Ctrl+J returns to kana, as in SKK.
@@ -94,6 +94,13 @@ impl PartLayer {
         }
         let composing = !matches!(engine.state(), InputState::Empty);
         let ctrl = key.is_press && key.modifiers.control_key && !key.modifiers.alt_key;
+        // Nothing composing: every Ctrl chord but our own Ctrl+J belongs to
+        // the application (Ctrl+U kills the line, Ctrl+K kills to its end…),
+        // so it never reaches the engine and its bindings.
+        let ctrl_j = matches!(key.keysym, Keysym::KEY_J | Keysym::KEY_J_UPPER);
+        if !composing && ctrl && !ctrl_j {
+            return EngineResult::not_consumed();
+        }
         if composing && ctrl && matches!(key.keysym, Keysym::KEY_U | Keysym::KEY_U_UPPER) {
             return self.discard(engine);
         }
@@ -150,6 +157,15 @@ impl PartLayer {
             // Also leave the engine's own katakana mode (Ctrl+K).
             engine.process_key(&press(Keysym::SUPER_R));
             return merge(EngineResult::consumed(), result);
+        }
+
+        // No katakana mode: Ctrl+K is the application's (kill-line) unless
+        // something is composing.
+        if m.control_key && matches!(key.keysym, Keysym::KEY_K | Keysym::KEY_K_UPPER) {
+            return match (self.mode, engine.state()) {
+                (PartMode::Ascii, _) | (_, InputState::Empty) => EngineResult::not_consumed(),
+                _ => EngineResult::consumed(),
+            };
         }
 
         match self.mode {
@@ -238,11 +254,15 @@ impl PartLayer {
                 }
                 Keysym::KEY_G | Keysym::KEY_G_UPPER => self.cancel_part(engine),
                 Keysym::KEY_R | Keysym::KEY_R_UPPER => self.start_registration(engine),
+                Keysym::KEY_I | Keysym::KEY_I_UPPER => engine.open_completions(),
                 _ => engine.process_key(key),
             };
         }
         let Some(ch) = typed_char(key) else {
             return match key.keysym {
+                // Tab and Ctrl+I are the same key (and the same thing):
+                // complete from what was typed before.
+                Keysym::TAB => engine.open_completions(),
                 Keysym::RETURN => {
                     let result = self.close(engine);
                     self.enter(engine, PartMode::Plain);
@@ -300,7 +320,9 @@ impl PartLayer {
         let m = key.modifiers;
         if m.control_key {
             return match key.keysym {
-                Keysym::KEY_N | Keysym::KEY_N_UPPER => engine.process_key(&press(Keysym::TAB)),
+                Keysym::KEY_N | Keysym::KEY_N_UPPER | Keysym::KEY_I | Keysym::KEY_I_UPPER => {
+                    engine.process_key(&press(Keysym::TAB))
+                }
                 Keysym::KEY_P | Keysym::KEY_P_UPPER => engine.process_key(&KeyEvent::new(
                     Keysym::TAB,
                     KeyModifiers::new().with_shift(true),
@@ -479,13 +501,10 @@ fn typed_char(key: &KeyEvent) -> Option<char> {
     key.to_char()
 }
 
-/// `Some(first)` when the key opens a kanji part: a capital (fed lowercased)
-/// or `q` (feeds nothing).
+/// `Some(first)` when the key opens a kanji part: a capital, fed lowercased.
 fn part_opener(key: &KeyEvent, ch: char) -> Option<Option<char>> {
-    if ch.is_ascii_uppercase() || (key.modifiers.shift_key && ch.is_ascii_lowercase()) {
-        return Some(Some(ch.to_ascii_lowercase()));
-    }
-    (ch == 'q').then_some(None)
+    (ch.is_ascii_uppercase() || (key.modifiers.shift_key && ch.is_ascii_lowercase()))
+        .then(|| Some(ch.to_ascii_lowercase()))
 }
 
 /// The engine's aux line carries mode and source markers (`[あ][変換:🤖]`,
@@ -575,10 +594,17 @@ mod tests {
     }
 
     #[test]
-    fn q_opens_part_and_capital_chains_parts() {
+    fn capital_chains_parts() {
         let (mut layer, mut engine) = setup();
-        assert_eq!(feed(&mut layer, &mut engine, "qhonjitu"), "");
+        assert_eq!(feed(&mut layer, &mut engine, "Honjitu"), "");
         assert_eq!(feed(&mut layer, &mut engine, "Kaigi "), "ほんじつかいぎ");
+    }
+
+    #[test]
+    fn ctrl_k_is_not_katakana() {
+        let (mut layer, mut engine) = setup();
+        assert!(!layer.process_key(&mut engine, &ctrl('k')).consumed);
+        assert_eq!(feed(&mut layer, &mut engine, "ka"), "か");
     }
 
     #[test]
