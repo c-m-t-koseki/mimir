@@ -4,13 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-karukan is a Japanese Input Method system for Linux and macOS, consisting of four Rust crates and a Swift package. The IME core and its platform frontends are grouped under `karukan-im/`:
+mimir is a Japanese Input Method system for Linux and macOS, consisting of four Rust crates and a Swift package. The IME core and its platform frontends are grouped under `mimir-im/`:
 
-- **karukan-engine** (`karukan-engine/`): Core library — romaji-to-hiragana conversion, neural kana-kanji conversion via llama.cpp, system dictionary, learning cache, candidate rewriter (width/case/symbol variants)
-- **karukan-cli** (`karukan-cli/`): CLI tools and server — dictionary builder, Sudachi converter, dict viewer, AJIMEE-Bench, HTTP API server
-- **karukan-im** (`karukan-im/core/`): Shared IME engine state machine (Empty → Composing → Conversion) and `karukan-imserver` stdio JSON-RPC server (macOS binary bundled in the macOS frontend)
-- **karukan-fcitx5** (`karukan-im/fcitx5/`): fcitx5 Linux frontend — C FFI (`src/ffi/`) and C++ addon (`fcitx5-addon/`) that wrap karukan-im
-- **karukan-macos** (`karukan-im/macos/`): Swift/InputMethodKit frontend that spawns `karukan-imserver` as a bundled child process
+- **mimir-engine** (`mimir-engine/`): Core library — romaji-to-hiragana conversion, neural kana-kanji conversion via llama.cpp, system dictionary, learning cache, candidate rewriter (width/case/symbol variants)
+- **mimir-cli** (`mimir-cli/`): CLI tools and server — dictionary builder, Sudachi converter, dict viewer, AJIMEE-Bench, HTTP API server
+- **mimir-im** (`mimir-im/core/`): Shared IME engine state machine (Empty → Composing → Conversion) and `mimir-imserver` stdio JSON-RPC server (macOS binary bundled in the macOS frontend)
+- **mimir-fcitx5** (`mimir-im/fcitx5/`): fcitx5 Linux frontend — C FFI (`src/ffi/`) and C++ addon (`fcitx5-addon/`) that wrap mimir-im
+- **mimir-macos** (`mimir-im/macos/`): Swift/InputMethodKit frontend that spawns `mimir-imserver` as a bundled child process
 
 ## Build and Development Commands
 
@@ -23,49 +23,49 @@ cargo build --release       # Build all crates
 cargo test --workspace      # Run all tests
 ```
 
-### karukan-engine
+### mimir-engine
 
 ```bash
-cargo build -p karukan-engine --release
-cargo test -p karukan-engine  # includes integration tests (model auto-downloaded on first run)
+cargo build -p mimir-engine --release
+cargo test -p mimir-engine  # includes integration tests (model auto-downloaded on first run)
 ```
 
-### karukan-cli
+### mimir-cli
 
 ```bash
-cargo build -p karukan-cli --release
+cargo build -p mimir-cli --release
 
 # Start the server (auto-downloads models from HuggingFace)
-cargo run --release --bin karukan-server
+cargo run --release --bin mimir-server
 
 # Build dictionary from JSON or Mozc TSV
-cargo run --release --bin karukan-dict -- build input.json -o dict.bin
+cargo run --release --bin mimir-dict -- build input.json -o dict.bin
 
 # Build scored dictionary from Sudachi CSV
 cargo run --release --bin sudachi-dict -- input.csv -o scored.json
 
 # Dictionary viewer (web UI + CLI search)
-cargo run --release --bin karukan-dict -- view dict.bin
+cargo run --release --bin mimir-dict -- view dict.bin
 
 # AJIMEE-Bench evaluation
 cargo run --release --bin ajimee-bench -- evaluation_items.json
 ```
 
-### karukan-im
+### mimir-im
 
 ```bash
-cargo build -p karukan-im --release
-cargo test -p karukan-im
+cargo build -p mimir-im --release
+cargo test -p mimir-im
 ```
 
-### karukan-fcitx5
+### mimir-fcitx5
 
 ```bash
-cargo build -p karukan-fcitx5 --release
-cargo test -p karukan-fcitx5
+cargo build -p mimir-fcitx5 --release
+cargo test -p mimir-fcitx5
 
 # Build and install fcitx5 addon
-cd karukan-im/fcitx5/fcitx5-addon
+cd mimir-im/fcitx5/fcitx5-addon
 
 # Option A: System install (sudo required, no FCITX_ADDON_DIRS needed)
 cmake -B build -DCMAKE_INSTALL_PREFIX=/usr
@@ -78,16 +78,16 @@ cmake --build build -j
 cmake --install build
 ```
 
-### karukan-macos
+### mimir-macos
 
 ```bash
-cd karukan-im/macos
+cd mimir-im/macos
 
-make test      # Swift tests (incl. integration tests against a real karukan-imserver)
-make install   # Build, assemble Karukan.app, install to ~/Library/Input Methods (auto-downloads dict.bin if missing and prefetches every configured [models] entry into the HF cache)
+make test      # Swift tests (incl. integration tests against a real mimir-imserver)
+make install   # Build, assemble Mimir.app, install to ~/Library/Input Methods (auto-downloads dict.bin if missing and prefetches every configured [models] entry into the HF cache)
 ```
 
-First install requires logout/login; afterwards `make install` + `killall KarukanIME` suffices.
+First install requires logout/login; afterwards `make install` + `killall MimirIME` suffices.
 
 ### Code Quality
 
@@ -98,7 +98,7 @@ cargo clippy --workspace  # Lint all crates
 
 ## Architecture
 
-### karukan-engine (`karukan-engine/src/`)
+### mimir-engine (`mimir-engine/src/`)
 
 - `lib.rs` — Library entry point and re-exports
 - `romaji/` — Romaji-to-hiragana conversion
@@ -122,7 +122,7 @@ cargo clippy --workspace  # Lint all crates
 - `learning.rs` — Learning cache (user conversion history, TSV persistence, recency+frequency scoring)
 - `kana.rs` — Hiragana/katakana utilities, full-width/half-width conversion functions
 
-### karukan-cli (`karukan-cli/src/`)
+### mimir-cli (`mimir-cli/src/`)
 
 - `bin/dict.rs` — Dictionary tool: build (JSON or Mozc TSV → binary) and view (web UI + CLI search)
 - `bin/sudachi_dict.rs` — Sudachi dictionary → scored JSON converter
@@ -130,7 +130,7 @@ cargo clippy --workspace  # Lint all crates
 - `bin/ajimee_bench.rs` — AJIMEE-Bench evaluation
 - `static/` — Web UI assets for server and dict-viewer
 
-### karukan-im (`karukan-im/core/src/`)
+### mimir-im (`mimir-im/core/src/`)
 
 - `core/engine/` — IMEEngine state machine (Empty → Composing → Conversion)
   - `mod.rs` — Main InputMethodEngine struct and core processing logic
@@ -153,36 +153,36 @@ cargo clippy --workspace  # Lint all crates
 - `core/candidate.rs` — Candidate list with pagination support
 - `core/keycode.rs` — Key symbol definitions and key event handling
 - `core/state.rs` — Engine state definitions
-- `config/settings.rs` — User settings (`~/.config/karukan-im/config.toml` on Linux, `~/Library/Application Support/com.karukan.karukan-im/` on macOS)
-- `server/` — stdio JSON-RPC 2.0 server for the macOS frontend (`protocol.rs` defines the wire format; `bin/karukan-imserver.rs` is the entry point)
+- `config/settings.rs` — User settings (`~/.config/mimir-im/config.toml` on Linux, `~/Library/Application Support/com.mimir.mimir-im/` on macOS)
+- `server/` — stdio JSON-RPC 2.0 server for the macOS frontend (`protocol.rs` defines the wire format; `bin/mimir-imserver.rs` is the entry point)
 
-### karukan-fcitx5 (`karukan-im/fcitx5/`)
+### mimir-fcitx5 (`mimir-im/fcitx5/`)
 
-Linux fcitx5 frontend. Wraps karukan-im via C FFI and exposes the engine to the C++ addon.
+Linux fcitx5 frontend. Wraps mimir-im via C FFI and exposes the engine to the C++ addon.
 
-- `src/ffi/mod.rs` — `KarukanEngine` opaque struct, action dispatch, cache structs, FFI macros
-- `src/ffi/lifecycle.rs` — `karukan_engine_new/init/free`
-- `src/ffi/input.rs` — `karukan_engine_process_key/reset/set_surrounding_text`
+- `src/ffi/mod.rs` — `MimirEngine` opaque struct, action dispatch, cache structs, FFI macros
+- `src/ffi/lifecycle.rs` — `mimir_engine_new/init/free`
+- `src/ffi/input.rs` — `mimir_engine_process_key/reset/set_surrounding_text`
 - `src/ffi/query.rs` — All getter functions (preedit, commit, candidates, aux, timing)
-- `include/karukan.h` — C header for the fcitx5 C++ addon
-- `fcitx5-addon/src/karukan.cpp` — C++ fcitx5 wrapper
+- `include/mimir.h` — C header for the fcitx5 C++ addon
+- `fcitx5-addon/src/mimir.cpp` — C++ fcitx5 wrapper
 
-### karukan-macos (`karukan-im/macos/Sources/KarukanIME/`)
+### mimir-macos (`mimir-im/macos/Sources/MimirIME/`)
 
-Swift/InputMethodKit frontend. All IME state lives in karukan-imserver (spawned as a bundled child process); Swift only adapts IMK events and renders UI.
+Swift/InputMethodKit frontend. All IME state lives in mimir-imserver (spawned as a bundled child process); Swift only adapts IMK events and renders UI.
 
 - `main.swift` — IMKServer startup, engine process spawn, wake-from-sleep restart, SIGPIPE handling
-- `KarukanInputController.swift` — IMKInputController; translates keys, applies engine actions (preedit/candidates/commit), JIS かな key and right-Command tap return to hiragana (exit katakana mode)
+- `MimirInputController.swift` — IMKInputController; translates keys, applies engine actions (preedit/candidates/commit), JIS かな key and right-Command tap return to hiragana (exit katakana mode)
 - `KeyCodeMap.swift` — NSEvent → XKB keysym translation (same keysym representation as fcitx5), RightCommandTapDetector
-- `resources/*.tiff` — template menu icon (か), regenerated via `swift scripts/generate_icons.swift`; `resources/{ja,en}.lproj/InfoPlist.strings` localize the input mode name shown in the input menu
+- `resources/*.tiff` — template menu icon (あ), regenerated via `swift scripts/generate_icons.swift`; `resources/{ja,en}.lproj/InfoPlist.strings` localize the input mode name shown in the input menu
 - `EngineProcess.swift` — child process lifecycle: crash restart with exponential backoff, EOF-based clean shutdown (lets the server save its learning cache)
 - `EngineClient.swift` — JSON-RPC transport (sync for process_key, async for fire-and-forget)
-- `EngineProtocol.swift` — Swift mirror of `karukan-im/core/src/server/protocol.rs` (keep in sync; protocol_version guards breaking changes)
+- `EngineProtocol.swift` — Swift mirror of `mimir-im/core/src/server/protocol.rs` (keep in sync; protocol_version guards breaking changes)
 - `CandidateWindowController.swift` — custom NSPanel candidate window (engine pre-paginates)
 
 ## macOS Input Mode Design
 
-This fork registers **two input modes** in `Info.plist`: Japanese (`dev.togatoga.inputmethod.Karukan.Japanese`) and Roman (`dev.togatoga.inputmethod.Karukan.Roman`). They mirror the part layer's kana / ASCII modes (`karukan-im/core/src/core/part.rs`) so the menu bar icon shows which one is active: the frontend calls `selectMode` whenever `KeyResult.mode` changes, and `setValue(_:forTag:)` brings the engine along when macOS switches the mode (input menu). The JIS 英数 key is consumed and sent to the engine as `Eisu_toggle` (ASCII mode); かな is sent as `Super_R` (kana mode). Upstream Karukan registers only the Japanese mode and leaves Latin input to the OS English source; this fork keeps Latin input inside Karukan.
+This fork registers **two input modes** in `Info.plist`: Japanese (`dev.tkoseki.inputmethod.Mimir.Japanese`) and Roman (`dev.tkoseki.inputmethod.Mimir.Roman`). They mirror the part layer's kana / ASCII modes (`mimir-im/core/src/core/part.rs`) so the menu bar icon shows which one is active: the frontend calls `selectMode` whenever `KeyResult.mode` changes, and `setValue(_:forTag:)` brings the engine along when macOS switches the mode (input menu). The JIS 英数 key is consumed and sent to the engine as `Eisu_toggle` (ASCII mode); かな is sent as `Super_R` (kana mode). Upstream Mimir registers only the Japanese mode and leaves Latin input to the OS English source; this fork keeps Latin input inside Mimir.
 
 The engine-internal `InputMode::Alphabet` (entered via Shift+letter on Linux/fcitx5) is a separate Rust engine concept, unused by the macOS part layer. Do not conflate the two.
 
@@ -192,7 +192,7 @@ The engine-internal `InputMode::Alphabet` (entered via Shift+letter on Linux/fci
 - `input_buf: InputBuffer` in IMEEngine is the source of truth: an element array (one element per display character — `Romaji(char)` unfired keystroke / `Converted(char)` settled character: fired output, passthrough, or direct input) plus a caret index. All views (display, conversion reading, aux romaji tail) are derived from it
 - `RomajiConverter` is stateless (pure `convert`/`flush_pending`); after each romaji keystroke the engine re-evaluates only the Romaji run ending at the caret (`evaluate_run`), re-recording fired keystrokes as `Converted`. `Converted` never re-enters evaluation, so settled text never reverts. Backspace/delete remove one element and then evaluate the run the removal joined, so the result always equals typing the remaining keystrokes fresh (`ykt` → BS → `o` → 「yこ」; `yt1t` minus the `1` → 「yっt」). Cursor moves and mode toggles never touch the array
 - Models use jinen format with special Unicode tokens (U+EE00–U+EE02) from the Private Use Area; model input is katakana (hiragana is converted to katakana before inference)
-- Models are defined in the config layer, not in karukan-engine: the `[models]` table (`karukan-im/core/config/default.toml` ships the defaults, Q5_K_M quantization; a user config.toml's `[models]` merges per key, each entry replacing whole) maps a key to a path string (local GGUF, tokenizer.json beside it) or `{ repo, filename }` (HuggingFace, tokenizer.json from the same repo); an entry stays `toml::Value` (`ModelDef`) so a broken one fails only when used, naming its own keys, and `Settings::load_from` warns about every broken entry at startup. `[conversion] model` / `light_model` reference those keys; `Settings::model_source` resolves a key to a `karukan_engine::ModelSource`, and `KanaKanjiConverter::from_source` loads it under that key as its display name. karukan-engine itself knows no model names
+- Models are defined in the config layer, not in mimir-engine: the `[models]` table (`mimir-im/core/config/default.toml` ships the defaults, Q5_K_M quantization; a user config.toml's `[models]` merges per key, each entry replacing whole) maps a key to a path string (local GGUF, tokenizer.json beside it) or `{ repo, filename }` (HuggingFace, tokenizer.json from the same repo); an entry stays `toml::Value` (`ModelDef`) so a broken one fails only when used, naming its own keys, and `Settings::load_from` warns about every broken entry at startup. `[conversion] model` / `light_model` reference those keys; `Settings::model_source` resolves a key to a `mimir_engine::ModelSource`, and `KanaKanjiConverter::from_source` loads it under that key as its display name. mimir-engine itself knows no model names
 - Model files resolve cache-first (`download_gguf`): a file already in the HuggingFace cache is returned without any network request, so a cached model resolves instantly offline; the network (short retry budget) is only touched on a cache miss. The flip side: an update pushed to the same repo/filename is not picked up once cached — model updates must change the filename. Model loading itself runs on a background thread (`spawn_model_loading`): `init` returns immediately, the engine runs dictionary/kana-only until `poll_loaded_models` (top of `process_key`) installs the converters, and a load failure (e.g. offline with an empty cache) leaves the IME running without a model instead of failing init
 - Live conversion (auto-suggest) splits the composing buffer into internal chunks of at most `chunk_chars` reading chars (default 30). Splitting bounds each model call and freezes settled text: once a boundary is behind the caret that chunk's reading and lctx no longer change, so it stays a cache hit and its display stops flickering. Chunks are internal — the user sees one continuous preedit
 - Chunk boundaries (`group_chunks`) open at the length cap, at a manual break (Ctrl+J → `insert_chunk_break`; boundaries live in `chunk_breaks` as reading positions, shift with edits via `edit_with_chunk_breaks`, and are cleared when the composition ends), and around non-Japanese chars (`is_japanese`: hiragana, katakana incl. `ー`, and kanji are Japanese; the middle dot `・` is special-cased as non-Japanese). A chunk containing Japanese keeps marks up to `chunk_symbols` (default 1) so 「おい、お前だよ」 keeps converting as one unit instead of freezing a premature 「老、」; digits up to `chunk_digits` (default 0, so digits stay out of the model — it hallucinates on digit runs, dropping or duplicating figures), filled greedily like the symbol budget, so the digits that fit ride along and the rest open the next chunk; and alphabet chars up to `chunk_alphabets` (default 0, so latin text stays passthrough and the unfired romaji tail — the `d` in 「わせだd」 — never reaches the model as part of the reading). A chunk with no Japanese is exempt from both caps and never reaches the model
@@ -209,10 +209,10 @@ The engine-internal `InputMode::Alphabet` (entered via Shift+letter on Linux/fci
 - The width rules describe kana input and stop at its edge (`width_for`): in Alphabet and Emoji mode nothing is converted, so `Hello, world.` typed with Shift stays ASCII and a `:smile` query stays typeable. Which is why the shipped defaults can be `kana_symbol`/`ascii_symbol` = `full`: kana input comes out full-width as it does in every Japanese IME, instead of the accident it used to be, where a symbol was full-width iff the rule table happened to carry it (`？！` full, `(` `@` `:` half). `digit` ships `half`: nothing here remembers the width last picked, so a full-width default would be one the user cannot take back. Letters have no setting at all — in kana input a latin char is either an unfired keystroke (the `d` in 「わせだd」, which a full-width rule would render 「わせだｄ」) or a dictionary surface, so `Group::Alphabet` exists only to give letters a half/full pair for the rewriter's variants and always resolves to `AsIs`
 - The width applies in two places, split by who produced the text. **Typed text settles as it is typed**: `evaluate_run` gives a character its configured width the moment it stops being a live keystroke (the converter carries the rules, `RomajiConverter::with_rules`), so each character keeps the width in force when it was typed — `（` then Shift+A leaves 「（A」, where deciding by the current mode would have reverted the paren the moment direct input started. Live keystrokes are untouched, and so is direct input (alphabet/emoji), which is what keeps `Hello, world.` ASCII. **The model's answers settle on the way in** (`settle_text`, from `live_text` and `settle_candidates`). That half is not optional — the model is prompted with NFKC and answers in half-width whatever was typed, so a width applied only while typing would be undone by the next conversion. It is also the *only* text settled that way: the model's width is an artifact, while every other source carries a width someone chose, so the dictionaries, learning, the rewriter's variants and the kana fallbacks are left alone. Folding them would rewrite authored spellings — the system dictionary has `Yahoo!`, `P!NK`, `Ya-foo`. Nothing settles on the way *out*: a candidate the user picked is already the width they chose, and a second pass would fold `＜＞１２３４` back to `＜＞1234` on commit. Candidate lists settle at construction rather than at display because the stored list is what Ctrl+digit indexes and what commit reads; folding creates duplicates (with `digit = "full"` both `1` and the rewriter's `１` come out `１`) and only the first survives. The rewriter's whole-candidate width pair (`。` → `｡` `[半]記号`, `<>1234` → `＜＞１２３４` and `<>1234`) is the per-instance escape hatch from the setting. User-facing doc: `docs/symbols.md`
 - Date/time conversion is a rewriter with config: `[date]` in config.toml lists phrases (きょう/あした/いま — `reading`, `offset_days`, optional `formats`) whose format strings render at conversion time. `phrases` is an array, so a user config writing it replaces the shipped list wholesale (`merge_toml` merges tables but replaces arrays — extend by copying default.toml's list, drop a phrase by omitting it; the first entry wins on a duplicated reading). Tokens are zero-padded (`{YEAR}/{MONTH}/{DATE}` → `2026/09/06`); `:bare` unpads (`9月`), `:kanji` renders kanji numerals — the year digit-by-digit (`二〇二六`), the rest read-style (`十六`), era year 1 as `元`. A format with an unknown token, or `{ERA}` before 明治, is skipped rather than shown broken; a phrase without its own `formats` shares the `[date]` list, so the shipped date phrases are one line each. `DateRewriter` is the only rewriter carrying config and the only clock-reading one — rendering lives in `candidates_at(reading, now)` so tests pin the clock — which is why it sits beside the chain (`Converters::date`, built in `with_config`) instead of in it: its candidates keep their own `CandidateSource::Date` (📅, no cycle stop — they head the Ctrl+R rewriter view and sit above the width variants in the mixed tail), and that source is what marks them non-learnable (`is_learnable`, checked at both commit paths). A committed date is never recorded: recorded once, yesterday's date would head every later きょう conversion at learning priority. User-facing doc: `docs/date.md`
-- Data files (system dictionary `dict.bin`, user dictionaries `user_dicts/`, learning cache `learning.tsv`) live in the data directory: `~/.local/share/karukan-im/` on Linux, `~/Library/Application Support/com.karukan.karukan-im/` on macOS; a prebuilt `dict.tgz` is published on GitHub releases
+- Data files (system dictionary `dict.bin`, user dictionaries `user_dicts/`, learning cache `learning.tsv`) live in the data directory: `~/.local/share/mimir-im/` on Linux, `~/Library/Application Support/com.mimir.mimir-im/` on macOS; a prebuilt `dict.tgz` is published on GitHub releases
 - Learning cache is persisted as TSV (`learning.tsv` in the data directory); saved on deactivate and engine free, not on every commit
 - Learning score uses recency-weighted formula (mozc-inspired): `recency * 10.0 + ln(1 + frequency)`; eviction removes lowest-score entries when over `max_entries` (default: 10,000)
 
-## Training (karukan-jinen)
+## Training (mimir-jinen)
 
-Model training is handled by the separate `karukan-jinen` Python project (not in this repository). It trains small language models (GPT-2 and Qwen3 based) for kana-kanji conversion using the jinen format, and outputs GGUF files for use with karukan-engine.
+Model training is handled by the separate `mimir-jinen` Python project (not in this repository). It trains small language models (GPT-2 and Qwen3 based) for kana-kanji conversion using the jinen format, and outputs GGUF files for use with mimir-engine.

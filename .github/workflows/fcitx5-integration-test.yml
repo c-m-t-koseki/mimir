@@ -4,9 +4,9 @@ on:
   push:
     branches: [main]
     paths:
-      - 'karukan-im/fcitx5/**'
-      - 'karukan-im/core/**'
-      - 'karukan-engine/**'
+      - 'mimir-im/fcitx5/**'
+      - 'mimir-im/core/**'
+      - 'mimir-engine/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
       - 'tests/integration/**'
@@ -14,9 +14,9 @@ on:
   pull_request:
     branches: [main]
     paths:
-      - 'karukan-im/fcitx5/**'
-      - 'karukan-im/core/**'
-      - 'karukan-engine/**'
+      - 'mimir-im/fcitx5/**'
+      - 'mimir-im/core/**'
+      - 'mimir-engine/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
       - 'tests/integration/**'
@@ -31,7 +31,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Build Docker image
-        run: docker build -f tests/integration/Dockerfile.fcitx5 -t karukan-fcitx5-test .
+        run: docker build -f tests/integration/Dockerfile.fcitx5 -t mimir-fcitx5-test .
 
       - name: Run integration tests
-        run: docker run --rm karukan-fcitx5-test
+        run: docker run --rm mimir-fcitx5-test
