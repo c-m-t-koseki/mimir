@@ -28,6 +28,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::config::settings::CandidateLayout;
 use crate::core::keycode::KeyModifiers;
 
 /// Protocol version reported by `init`. Bump on breaking changes.
@@ -147,6 +148,11 @@ pub struct KeyResult {
     /// completions or the reading); absent when there is nothing to show.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hint: Option<String>,
+    /// Whether the select keys (a–l) pick from the candidate window; the
+    /// frontend labels its rows with them only then.
+    pub select_keys: bool,
+    /// `[display] candidate_layout`: "vertical" or "horizontal".
+    pub candidate_layout: CandidateLayout,
 }
 
 /// `set_config`: write `[section] key = value` into config.toml. Takes
