@@ -7,7 +7,9 @@
 //! which typing goes on as before. `l` switches to direct ASCII input
 //! and Ctrl+J returns to kana, as in SKK.
 //!
-//! `q` inside a part commits its reading in katakana, as in SKK.
+//! `q` inside a part commits its reading in katakana, as in SKK. `/` opens
+//! SKK's abbrev input: letters go in as typed, Space converts them
+//! (github → GitHub), Enter commits them as they are.
 //!
 //! Inside a part, candidate keys are Emacs-style so nothing collides with
 //! SandS: Ctrl+N opens the candidate window / next candidate, Ctrl+P the
@@ -48,6 +50,8 @@ pub struct PartLayer {
     mode: PartMode,
     /// What [`Self::hint`] reports while a part is typed.
     hint: PartHint,
+    /// The open part is abbrev input (`/`).
+    abbrev: bool,
     /// SKK style: only a capital opens a part. The layer's own default
     /// (its tests are written for it); `[conversion] skk_style` sets it.
     skk_style: bool,
@@ -90,6 +94,7 @@ impl PartLayer {
             mode: PartMode::Plain,
             hint: PartHint::default(),
             skk_style: true,
+            abbrev: false,
             register: None,
             recent: None,
         }
@@ -118,6 +123,10 @@ impl PartLayer {
     fn enter(&mut self, engine: &mut InputMethodEngine, mode: PartMode) {
         self.mode = mode;
         engine.set_live_conversion(mode == PartMode::Part);
+        if self.abbrev {
+            self.abbrev = false;
+            engine.end_abbrev();
+        }
     }
 
     pub fn process_key(&mut self, engine: &mut InputMethodEngine, key: &KeyEvent) -> EngineResult {
@@ -131,7 +140,7 @@ impl PartLayer {
         // the application (Ctrl+U kills the line, Ctrl+K kills to its end…),
         // so it never reaches the engine and its bindings.
         let ctrl_j = matches!(key.keysym, Keysym::KEY_J | Keysym::KEY_J_UPPER);
-        if !composing && ctrl && !ctrl_j {
+        if !composing && ctrl && !ctrl_j && !self.abbrev {
             return EngineResult::not_consumed();
         }
         if composing && ctrl && matches!(key.keysym, Keysym::KEY_U | Keysym::KEY_U_UPPER) {
@@ -333,6 +342,13 @@ impl PartLayer {
 
     fn plain_key(&mut self, engine: &mut InputMethodEngine, key: &KeyEvent) -> EngineResult {
         if let Some(ch) = typed_char(key) {
+            if ch == '/' && matches!(engine.state(), InputState::Empty) {
+                self.enter(engine, PartMode::Part);
+                engine.set_live_conversion(false);
+                engine.start_abbrev();
+                self.abbrev = true;
+                return EngineResult::consumed();
+            }
             if z_sequence(engine, ch) {
                 let result = without_suggestions(engine.feed_romaji(ch));
                 let result = merge(result, engine.commit_plain_result());
@@ -364,6 +380,9 @@ impl PartLayer {
     }
 
     fn part_key(&mut self, engine: &mut InputMethodEngine, key: &KeyEvent) -> EngineResult {
+        if self.abbrev {
+            return self.abbrev_key(engine, key);
+        }
         let m = key.modifiers;
         if m.control_key {
             return match key.keysym {
@@ -426,6 +445,40 @@ impl PartLayer {
             return merge(result, self.plain_key(engine, key));
         }
         engine.process_key(key)
+    }
+
+    /// Abbrev input: every printable key is a letter of it; Space or Ctrl+N
+    /// converts, Enter commits it as typed (not learned: nothing was
+    /// chosen), Ctrl+G / Escape cancels.
+    fn abbrev_key(&mut self, engine: &mut InputMethodEngine, key: &KeyEvent) -> EngineResult {
+        let empty = matches!(engine.state(), InputState::Empty);
+        let ctrl = key.modifiers.control_key;
+        let is =
+            |upper: Keysym, lower: Keysym| ctrl && (key.keysym == upper || key.keysym == lower);
+        if is(Keysym::KEY_G_UPPER, Keysym::KEY_G) || key.keysym == Keysym::ESCAPE {
+            return self.cancel_part(engine);
+        }
+        if is(Keysym::KEY_N_UPPER, Keysym::KEY_N) || (!ctrl && key.keysym == Keysym::SPACE) {
+            return if empty {
+                self.enter(engine, PartMode::Plain);
+                EngineResult::consumed()
+            } else {
+                engine.convert()
+            };
+        }
+        if key.keysym == Keysym::RETURN {
+            let result = if empty {
+                EngineResult::consumed()
+            } else {
+                engine.commit_unlearned_result()
+            };
+            self.enter(engine, PartMode::Plain);
+            return result;
+        }
+        if typed_char(key).is_some() {
+            return engine.process_key(key);
+        }
+        self.after_edit(engine, key)
     }
 
     /// Backspace and friends: leaving the part empty drops back to plain.
@@ -784,6 +837,31 @@ mod tests {
         feed(&mut layer, &mut engine, "Pan");
         layer.process_key(&mut engine, &ctrl('n'));
         assert_eq!(feed(&mut layer, &mut engine, "q"), "パン");
+    }
+
+    #[test]
+    fn slash_opens_abbrev_input() {
+        let (mut layer, mut engine) = setup();
+        // Letters (l and q too) go in as typed; Enter commits them.
+        assert_eq!(feed(&mut layer, &mut engine, "/Html5q"), "");
+        let result = layer.process_key(&mut engine, &press(Keysym::RETURN));
+        assert!(
+            result
+                .actions
+                .iter()
+                .any(|a| matches!(a, EngineAction::Commit(text) if text == "Html5q"))
+        );
+        // Back to kana afterwards.
+        assert_eq!(feed(&mut layer, &mut engine, "ka"), "か");
+        // Space converts.
+        feed(&mut layer, &mut engine, "/abc");
+        layer.process_key(&mut engine, &press(Keysym::SPACE));
+        assert!(matches!(engine.state(), InputState::Conversion { .. }));
+        // Cancelled before a letter: kana again.
+        let (mut layer, mut engine) = setup();
+        feed(&mut layer, &mut engine, "/");
+        layer.process_key(&mut engine, &ctrl('g'));
+        assert_eq!(feed(&mut layer, &mut engine, "ka"), "か");
     }
 
     #[test]
