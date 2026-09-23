@@ -69,13 +69,16 @@
 
         <!-- Karukan's own direct-ASCII mode (英数 / `l`). Registered so the
              menu bar icon can show it: the frontend selects this mode when
-             the engine goes ASCII and the Japanese one when it comes back. -->
+             the engine goes ASCII and the Japanese one when it comes back.
+             JISKeyboardShortcutKey 2 makes the JIS 英数 key select this mode
+             (1 = かな selects Japanese) instead of the OS English source, and
+             the intended language ja lists it under 日本語. -->
         <key>dev.togatoga.inputmethod.Karukan.Roman</key>
         <dict>
           <key>TISInputSourceID</key>
           <string>dev.togatoga.inputmethod.Karukan.Roman</string>
           <key>TISIntendedLanguage</key>
-          <string>en</string>
+          <string>ja</string>
           <key>tsInputModeScriptKey</key>
           <string>smRoman</string>
           <key>tsInputModeDefaultStateKey</key>
@@ -85,7 +88,7 @@
           <key>tsInputModePrimaryInScriptKey</key>
           <true/>
           <key>tsInputModeJISKeyboardShortcutKey</key>
-          <integer>0</integer>
+          <integer>2</integer>
           <key>tsInputModeMenuIconFileKey</key>
           <string>karukan-roman.tiff</string>
           <key>tsInputModePaletteIconFileKey</key>
