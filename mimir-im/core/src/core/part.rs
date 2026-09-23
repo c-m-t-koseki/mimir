@@ -1,9 +1,10 @@
 //! Kanji-part input layer: an explicit conversion span in front of the engine.
 //!
-//! Kana input is plain hiragana, committed as soon as each kana fires. A
-//! capital letter (Shift+letter, i.e. SandS) opens a *kanji part*,
-//! which the engine live-converts; a bare Space closes it (commit), after
-//! which typing is plain hiragana again. `l` switches to direct ASCII input
+//! In SKK style (`[conversion] skk_style`), kana input is plain hiragana,
+//! committed as soon as each kana fires, and a capital letter (Shift+letter,
+//! i.e. SandS) opens a *kanji part*; otherwise any letter opens one. The
+//! engine live-converts the part; a bare Space closes it (commit), after
+//! which typing goes on as before. `l` switches to direct ASCII input
 //! and Ctrl+J returns to kana, as in SKK.
 //!
 //! Inside a part, candidate keys are Emacs-style so nothing collides with
@@ -45,6 +46,9 @@ pub struct PartLayer {
     mode: PartMode,
     /// What [`Self::hint`] reports while a part is typed.
     hint: PartHint,
+    /// SKK style: only a capital opens a part. The layer's own default
+    /// (its tests are written for it); `[conversion] skk_style` sets it.
+    skk_style: bool,
     /// Word registration in progress: the reading and the word so far.
     register: Option<Registration>,
     /// What was committed just before, `(reading, text)`: the last part
@@ -83,6 +87,7 @@ impl PartLayer {
         Self {
             mode: PartMode::Plain,
             hint: PartHint::default(),
+            skk_style: true,
             register: None,
             recent: None,
         }
@@ -93,6 +98,10 @@ impl PartLayer {
             hint,
             ..Self::new()
         }
+    }
+
+    pub fn with_skk_style(self, skk_style: bool) -> Self {
+        Self { skk_style, ..self }
     }
 
     pub fn mode(&self) -> PartMode {
@@ -333,6 +342,9 @@ impl PartLayer {
             }
             if ch == 'l' {
                 return self.switch_to_ascii(engine);
+            }
+            if !self.skk_style && ch.is_ascii_lowercase() {
+                return self.start_part(engine, Some(ch));
             }
             if ch == ' ' && !matches!(engine.state(), InputState::Empty) {
                 let result = engine.commit_plain_result();
@@ -725,6 +737,19 @@ mod tests {
         assert_eq!(feed(&mut layer, &mut engine, "Kazl"), "");
         assert_eq!(layer.mode(), PartMode::Part);
         assert_eq!(feed(&mut layer, &mut engine, " "), "か→");
+    }
+
+    #[test]
+    fn without_skk_style_any_letter_opens_a_part() {
+        let (layer, mut engine) = setup();
+        let mut layer = layer.with_skk_style(false);
+        assert_eq!(feed(&mut layer, &mut engine, "kaigi"), "");
+        assert_eq!(layer.mode(), PartMode::Part);
+        assert_eq!(feed(&mut layer, &mut engine, " "), "かいぎ");
+        // After the part closes, the next letter opens another.
+        assert_eq!(feed(&mut layer, &mut engine, "ha,"), "は、");
+        assert_eq!(feed(&mut layer, &mut engine, "l"), "");
+        assert_eq!(layer.mode(), PartMode::Ascii);
     }
 
     #[test]

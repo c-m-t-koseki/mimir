@@ -47,6 +47,9 @@ n_threads = 4
 live_conversion = true
 # 予測候補（入力した読みで始まる、より長い語。「ひらがな」→「ひらがなタイムズ」）を出す
 predictive = false
+# SKK 式: 大文字で漢字パートを開き、小文字は平仮名のまま確定する。
+# false なら、打った文字は常に漢字パートとしてライブ変換する
+skk_style = false
 # ユーザー辞書: ~/.local/share/mimir-im/user_dicts/ に辞書ファイルを配置（Mozc TSV or KRKN binary）
 
 # 変換モデル。model / light_model はここのキーを参照する。値は 2 通り:

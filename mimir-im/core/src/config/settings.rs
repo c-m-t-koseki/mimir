@@ -228,6 +228,10 @@ pub struct ConversionSettings {
     /// Offer predictive candidates: dictionary/learning readings that merely
     /// start with the typed one (ひらがな → ひらがなタイムズ)
     pub predictive: bool,
+    /// SKK style: only a capital opens a kanji part, and lowercase kana is
+    /// plain hiragana. Off, every letter opens a part (all input is
+    /// live-converted).
+    pub skk_style: bool,
 }
 
 /// Learning cache settings
