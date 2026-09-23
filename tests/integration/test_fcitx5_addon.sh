@@ -23,7 +23,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-echo "=== Karukan fcitx5 Integration Tests ==="
+echo "=== Mimir fcitx5 Integration Tests ==="
 echo ""
 
 # -------------------------------------------------------
@@ -34,28 +34,28 @@ echo "[1/4] Checking installed files..."
 ADDON_DIR=$(pkg-config --variable=libdir Fcitx5Core)/fcitx5
 FCITX5_DATA="/usr/share/fcitx5"
 
-if [ -f "$ADDON_DIR/karukan.so" ]; then
-    pass "karukan.so installed at $ADDON_DIR/karukan.so"
+if [ -f "$ADDON_DIR/mimir.so" ]; then
+    pass "mimir.so installed at $ADDON_DIR/mimir.so"
 else
-    fail "karukan.so not found at $ADDON_DIR/karukan.so"
+    fail "mimir.so not found at $ADDON_DIR/mimir.so"
 fi
 
-if [ -f "$ADDON_DIR/libkarukan_fcitx5.so" ]; then
-    pass "libkarukan_fcitx5.so installed at $ADDON_DIR/libkarukan_fcitx5.so"
+if [ -f "$ADDON_DIR/libmimir_fcitx5.so" ]; then
+    pass "libmimir_fcitx5.so installed at $ADDON_DIR/libmimir_fcitx5.so"
 else
-    fail "libkarukan_fcitx5.so not found at $ADDON_DIR/libkarukan_fcitx5.so"
+    fail "libmimir_fcitx5.so not found at $ADDON_DIR/libmimir_fcitx5.so"
 fi
 
-if [ -f "$FCITX5_DATA/addon/karukan.conf" ]; then
-    pass "addon config installed at $FCITX5_DATA/addon/karukan.conf"
+if [ -f "$FCITX5_DATA/addon/mimir.conf" ]; then
+    pass "addon config installed at $FCITX5_DATA/addon/mimir.conf"
 else
-    fail "addon config not found at $FCITX5_DATA/addon/karukan.conf"
+    fail "addon config not found at $FCITX5_DATA/addon/mimir.conf"
 fi
 
-if [ -f "$FCITX5_DATA/inputmethod/karukan.conf" ]; then
-    pass "inputmethod config installed at $FCITX5_DATA/inputmethod/karukan.conf"
+if [ -f "$FCITX5_DATA/inputmethod/mimir.conf" ]; then
+    pass "inputmethod config installed at $FCITX5_DATA/inputmethod/mimir.conf"
 else
-    fail "inputmethod config not found at $FCITX5_DATA/inputmethod/karukan.conf"
+    fail "inputmethod config not found at $FCITX5_DATA/inputmethod/mimir.conf"
 fi
 
 # -------------------------------------------------------
@@ -64,24 +64,24 @@ fi
 echo ""
 echo "[2/4] Checking shared library linkage..."
 
-if ldd "$ADDON_DIR/karukan.so" | grep -q "libkarukan_fcitx5.so"; then
-    pass "karukan.so links to libkarukan_fcitx5.so"
+if ldd "$ADDON_DIR/mimir.so" | grep -q "libmimir_fcitx5.so"; then
+    pass "mimir.so links to libmimir_fcitx5.so"
 else
-    fail "karukan.so does not link to libkarukan_fcitx5.so"
+    fail "mimir.so does not link to libmimir_fcitx5.so"
 fi
 
-if ldd "$ADDON_DIR/karukan.so" | grep -q "libFcitx5Core"; then
-    pass "karukan.so links to libFcitx5Core"
+if ldd "$ADDON_DIR/mimir.so" | grep -q "libFcitx5Core"; then
+    pass "mimir.so links to libFcitx5Core"
 else
-    fail "karukan.so does not link to libFcitx5Core"
+    fail "mimir.so does not link to libFcitx5Core"
 fi
 
-# Verify RPATH is set to $ORIGIN so it can find libkarukan_fcitx5.so
-RPATH_INFO=$(readelf -d "$ADDON_DIR/karukan.so" 2>/dev/null | grep -E "RPATH|RUNPATH" || true)
+# Verify RPATH is set to $ORIGIN so it can find libmimir_fcitx5.so
+RPATH_INFO=$(readelf -d "$ADDON_DIR/mimir.so" 2>/dev/null | grep -E "RPATH|RUNPATH" || true)
 if echo "$RPATH_INFO" | grep -q '\$ORIGIN'; then
-    pass "karukan.so has \$ORIGIN RPATH"
+    pass "mimir.so has \$ORIGIN RPATH"
 else
-    fail "karukan.so missing \$ORIGIN RPATH (got: ${RPATH_INFO:-none})"
+    fail "mimir.so missing \$ORIGIN RPATH (got: ${RPATH_INFO:-none})"
 fi
 
 # -------------------------------------------------------
@@ -90,11 +90,11 @@ fi
 echo ""
 echo "[3/4] Checking addon configuration..."
 
-ADDON_CONF="$FCITX5_DATA/addon/karukan.conf"
-if grep -q "Library=karukan" "$ADDON_CONF"; then
-    pass "addon config has Library=karukan"
+ADDON_CONF="$FCITX5_DATA/addon/mimir.conf"
+if grep -q "Library=mimir" "$ADDON_CONF"; then
+    pass "addon config has Library=mimir"
 else
-    fail "addon config missing Library=karukan"
+    fail "addon config missing Library=mimir"
 fi
 
 if grep -q "Type=SharedLibrary" "$ADDON_CONF"; then
@@ -109,7 +109,7 @@ else
     fail "addon config missing Category=InputMethod"
 fi
 
-IM_CONF="$FCITX5_DATA/inputmethod/karukan.conf"
+IM_CONF="$FCITX5_DATA/inputmethod/mimir.conf"
 if grep -q "LangCode=ja" "$IM_CONF"; then
     pass "inputmethod config has LangCode=ja"
 else
@@ -136,7 +136,7 @@ FCITX5_PID=$!
 STARTED=false
 for i in $(seq 1 30); do
     sleep 0.5
-    if grep -q "Loaded addon karukan" "$FCITX5_LOG" 2>/dev/null; then
+    if grep -q "Loaded addon mimir" "$FCITX5_LOG" 2>/dev/null; then
         STARTED=true
         break
     fi
@@ -147,20 +147,20 @@ for i in $(seq 1 30); do
 done
 
 if [ "$STARTED" = true ]; then
-    pass "fcitx5 loaded addon karukan successfully"
+    pass "fcitx5 loaded addon mimir successfully"
 else
-    fail "fcitx5 did not load addon karukan within timeout"
+    fail "fcitx5 did not load addon mimir within timeout"
     echo "  --- fcitx5 log (last 50 lines) ---"
     tail -50 "$FCITX5_LOG" | sed 's/^/  | /'
     echo "  --- end log ---"
 fi
 
-# Check that no load error occurred for karukan
-if grep -q "Could not load addon karukan" "$FCITX5_LOG" 2>/dev/null; then
-    fail "fcitx5 reported error loading karukan addon"
-    grep "karukan" "$FCITX5_LOG" | sed 's/^/  | /'
+# Check that no load error occurred for mimir
+if grep -q "Could not load addon mimir" "$FCITX5_LOG" 2>/dev/null; then
+    fail "fcitx5 reported error loading mimir addon"
+    grep "mimir" "$FCITX5_LOG" | sed 's/^/  | /'
 else
-    pass "no load error for karukan addon"
+    pass "no load error for mimir addon"
 fi
 
 # -------------------------------------------------------

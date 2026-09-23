@@ -1,6 +1,6 @@
 # Key Bindings
 
-Karukan のキーバインド一覧です。共通キーバインドは Linux (fcitx5) / macOS の両方で使えます。
+Mimir のキーバインド一覧です。共通キーバインドは Linux (fcitx5) / macOS の両方で使えます。
 
 ## ひらがな入力モード
 

@@ -1,0 +1,65 @@
+name: mimir-macos CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'mimir-im/macos/**'
+      - 'mimir-im/core/**'
+      - 'mimir-engine/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/mimir-macos-ci.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'mimir-im/macos/**'
+      - 'mimir-im/core/**'
+      - 'mimir-engine/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/mimir-macos-ci.yml'
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  lint:
+    name: Swift Format
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install swift-format
+        run: brew install swift-format
+      - name: Swift format lint
+        run: swift-format lint -r Sources/ Tests/
+        working-directory: mimir-im/macos
+
+  test:
+    name: Build & Test
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+
+      # Rust-side coverage on macOS (mimir-imserver is the macOS engine path)
+      - name: Run Rust tests (mimir-im)
+        run: cargo test -p mimir-im
+
+      # target/debug/mimir-imserver is required by the Swift
+      # TransportTests (they skip when the binary is missing)
+      - name: Build mimir-imserver
+        run: cargo build -p mimir-im --bin mimir-imserver
+
+      - name: Swift build
+        run: swift build
+        working-directory: mimir-im/macos
+
+      - name: Swift test
+        run: swift test
+        working-directory: mimir-im/macos

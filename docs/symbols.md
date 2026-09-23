@@ -131,4 +131,4 @@ AI変換の結果に含まれる空白もこの設定に揃えます。モデル
 
 ## 設定の反映
 
-設定変更後は fcitx5 の再起動（macOSは `killall KarukanIME`）で反映されます。
+設定変更後は fcitx5 の再起動（macOSは `killall MimirIME`）で反映されます。

@@ -1,7 +1,5 @@
 # 漢字パート入力（macOS）
 
-この fork の macOS 版は **Mimir** という名前で入る（表示名・bundle ID `dev.tkoseki.inputmethod.Mimir`）。エンジン・サーバ（`karukan-imserver`）・データの置き場（`~/Library/Application Support/com.karukan.karukan-im`）は元の Karukan の名前のままにしてある。
-
 macOS フロントエンドでは、変換する範囲（漢字パート）を自分で明示して入力する。範囲の外は平仮名のまま、打ったそばから確定する。SandS（Space を押したままの Shift）と一緒に使うことを前提にしている。
 
 ```
@@ -94,7 +92,7 @@ Google 日本語入力と同じ `z` 入力が使える（zh ← / zj ↓ / zk �
 
 ```sh
 scripts/skk2mozc.py ~/Library/Application\ Support/AquaSKK/skk-jisyo.utf8 \
-    > ~/Library/Application\ Support/com.karukan.karukan-im/user_dicts/skk-user.tsv
+    > ~/Library/Application\ Support/com.mimir.mimir-im/user_dicts/skk-user.tsv
 ```
 
 取り込めるのは送りなしエントリだけである。ユーザー辞書の候補はモデルの候補より上に並ぶので、SKK-JISYO.L のような大きな一般辞書は入れない方がよい。

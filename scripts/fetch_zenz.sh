@@ -1,22 +1,22 @@
 #!/bin/sh
-# Fetch a zenz model (azooKey's kana-kanji GPT-2) into a directory karukan
+# Fetch a zenz model (azooKey's kana-kanji GPT-2) into a directory mimir
 # can load as a local `[models]` entry: model.gguf + tokenizer.json.
 #
 # zenz-v3 uses the same prompt layout as jinen (context, input, output), so
 # only two things need fixing up:
 #   * the GGUF names a pre-tokenizer (`gpt2-small-japanese-char`) that only
 #     azooKey's llama.cpp fork knows; mainline llama.cpp refuses to load it.
-#     karukan tokenizes with tokenizer.json, so the key is simply dropped.
+#     mimir tokenizes with tokenizer.json, so the key is simply dropped.
 #   * no tokenizer.json is published; it is built from the HF repo's
 #     vocab.json/merges.txt (the v3.x models share one 6000-token vocab).
 #
 # usage: scripts/fetch_zenz.sh [variant] [dest]
 #   variant: zenz-v3.2-small (default), zenz-v3.2-xsmall, zenz-v3.1-small, ...
-#   dest:    ~/Library/Application Support/com.karukan.karukan-im/models/<variant>
+#   dest:    ~/Library/Application Support/com.mimir.mimir-im/models/<variant>
 set -eu
 
 variant=${1:-zenz-v3.2-small}
-dest=${2:-"$HOME/Library/Application Support/com.karukan.karukan-im/models/$variant"}
+dest=${2:-"$HOME/Library/Application Support/com.mimir.mimir-im/models/$variant"}
 mkdir -p "$dest"
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
