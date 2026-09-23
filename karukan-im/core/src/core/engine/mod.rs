@@ -299,6 +299,20 @@ impl InputMethodEngine {
         matches!(self.state, InputState::Composing { .. }).then(|| self.input_buf.display())
     }
 
+    /// Tab / Ctrl+I in a part: complete the reading from what was committed
+    /// before — the learning history view, readings extending the typed one
+    /// included. Does nothing when the history has no match.
+    pub fn open_completions(&mut self) -> EngineResult {
+        if !matches!(self.state, InputState::Composing { .. }) {
+            return EngineResult::consumed();
+        }
+        let base = self.input_buf.settled_reading(&self.converters.romaji);
+        if self.lookup_learning_history(&base, "").is_empty() {
+            return EngineResult::consumed();
+        }
+        self.jump_to_source(CandidateSource::Learning)
+    }
+
     /// End the composition without committing, returning its kana reading
     /// (the word-registration flow takes the reading, then asks for the word).
     pub fn take_reading(&mut self) -> String {
