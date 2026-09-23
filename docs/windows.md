@@ -21,15 +21,24 @@ TSF の部分は macOS 上で `cargo check -p mimir-tsf --target x86_64-pc-windo
 
 ## ビルドとインストール
 
-必要なもの: Rust（MSVC ツールチェーン）、Visual Studio Build Tools（C++）、CMake（llama.cpp のビルドに使う）。
-
 管理者の PowerShell で:
 
 ```powershell
 .\mimir-im\windows\install.ps1
 ```
 
-`C:\Program Files\Mimir` に `mimir_tsf.dll` と `mimir-imserver.exe` を置き、システム辞書とモデルを取得して、`regsvr32` で登録する。そのあと 設定 → 時刻と言語 → 言語と地域 → 日本語 → 言語のオプション → キーボード で Mimir を追加する。外すときは `install.ps1 -Uninstall`。
+最初に、ビルドに要るものがそろっているかを確かめ、足りないものを winget で入れる（入れる前に一度だけ確認する）。
+
+| 必要なもの | 用途 | 確かめ方 | winget の ID |
+|---|---|---|---|
+| Rust（MSVC ツールチェーン） | ビルド全体 | `cargo` | `Rustlang.Rustup` |
+| Visual Studio Build Tools（C++） | リンカ、llama.cpp のコンパイル | `vswhere` で VC ツール | `Microsoft.VisualStudio.2022.BuildTools`（C++ ワークロード） |
+| CMake | llama.cpp のビルド | `cmake` | `Kitware.CMake` |
+| LLVM（libclang） | llama.cpp の bindgen | `libclang.dll` | `LLVM.LLVM` |
+
+winget が無いときは、Microsoft Store の「アプリ インストーラー」を入れるか、上の4つを手で入れる。ビルドの準備だけしたいときは `install.ps1 -Setup`。
+
+そろったら、ビルドして `C:\Program Files\Mimir` に `mimir_tsf.dll` と `mimir-imserver.exe` を置き、システム辞書とモデルを取得して、`regsvr32` で登録する。そのあと 設定 → 時刻と言語 → 言語と地域 → 日本語 → 言語のオプション → キーボード で Mimir を追加する。外すときは `install.ps1 -Uninstall`。
 
 設定・辞書・学習は `%APPDATA%\mimir\mimir-im\`（設定は `config\config.toml`、データは `data\`）に置かれる。
 
