@@ -98,6 +98,10 @@ pub struct LlamaCppModel {
     /// detokenizing: added tokens with `special: true`, minus the
     /// byte-fallback tokens (see [`is_byte_fallback_token`]).
     special_token_ids: HashSet<u32>,
+    /// Tokens that start a Private Use Area char (the U+EExx prompt
+    /// markers). zenz-v3.2 emits its own markers (U+EE08, …) after short
+    /// readings; they are never real output, so generation stops there.
+    marker_token_ids: HashSet<u32>,
     /// Number of threads for inference (0 = use llama.cpp default)
     n_threads: u32,
 }
@@ -145,12 +149,27 @@ impl LlamaCppModel {
             .filter(|(_, tok)| tok.special && !is_byte_fallback_token(&tok.content))
             .map(|(id, _)| id)
             .collect();
+        // Byte-level BPE spells byte 0xEE (the UTF-8 lead byte of every
+        // U+E000–U+EFFF char) as `î`, added tokens spell the char itself.
+        // ponytail: a non-byte-level vocab with a real `î` token would stop
+        // early on it; key off the tokenizer's pre-tokenizer if one appears.
+        let marker_token_ids = external_tokenizer
+            .get_vocab(true)
+            .into_iter()
+            .filter(|(tok, _)| {
+                tok.chars()
+                    .next()
+                    .is_some_and(|c| c == 'î' || ('\u{e000}'..='\u{efff}').contains(&c))
+            })
+            .map(|(_, id)| id)
+            .collect();
 
         Ok(Self {
             model,
             n_ctx,
             external_tokenizer,
             special_token_ids,
+            marker_token_ids,
             n_threads: 0,
         })
     }
@@ -735,6 +754,7 @@ impl LlamaCppModel {
         eos_token_id.is_some_and(|eos| token.0 == eos)
             || token == model_eos
             || self.model.is_eog_token(token)
+            || u32::try_from(token.0).is_ok_and(|id| self.marker_token_ids.contains(&id))
     }
 
     /// Generate tokens with a custom sampler

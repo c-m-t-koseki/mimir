@@ -12,6 +12,7 @@ use crate::config::Settings;
 use crate::core::candidate::CandidateList;
 use crate::core::engine::{EngineAction, EngineConfig, EngineResult, InputMethodEngine};
 use crate::core::keycode::{KeyEvent, Keysym};
+use crate::core::part::PartLayer;
 use crate::core::state::InputState;
 
 use protocol::{
@@ -25,6 +26,8 @@ use protocol::{
 /// (Empty → Composing → Conversion) lives here across requests.
 pub struct ImServer {
     engine: InputMethodEngine,
+    /// Kanji-part layer every key goes through (plain kana / part / ASCII).
+    part: PartLayer,
     /// Pending settings, consumed by the first successful `init`.
     settings: Option<Settings>,
     initialized: bool,
@@ -45,8 +48,12 @@ impl ImServer {
 
     pub fn with_settings(settings: Settings) -> Self {
         let config = EngineConfig::from_settings(&settings);
+        let mut engine = InputMethodEngine::with_config(config);
+        let mut part = PartLayer::new();
+        part.attach(&mut engine);
         Self {
-            engine: InputMethodEngine::with_config(config),
+            engine,
+            part,
             settings: Some(settings),
             initialized: false,
         }
@@ -89,7 +96,7 @@ impl ImServer {
                 let params: ProcessKeyParams = parse_params(params)?;
                 let event =
                     KeyEvent::new(Keysym(params.keysym), params.modifiers, !params.is_release);
-                let result = self.engine.process_key(&event);
+                let result = self.part.process_key(&mut self.engine, &event);
                 self.key_result(result)
             }
             "select_candidate" => {
@@ -104,11 +111,12 @@ impl ImServer {
                 self.key_result(result)
             }
             "commit" => {
-                let result = self.engine.commit_result();
+                let result = self.part.flush(&mut self.engine);
                 self.key_result(result)
             }
             "reset" => {
                 self.engine.reset();
+                self.part.attach(&mut self.engine);
                 Ok(json!({}))
             }
             "set_surrounding_text" => {
