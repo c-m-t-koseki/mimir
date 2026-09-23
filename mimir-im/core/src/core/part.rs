@@ -7,6 +7,8 @@
 //! which typing goes on as before. `l` switches to direct ASCII input
 //! and Ctrl+J returns to kana, as in SKK.
 //!
+//! `q` inside a part commits its reading in katakana, as in SKK.
+//!
 //! Inside a part, candidate keys are Emacs-style so nothing collides with
 //! SandS: Ctrl+N opens the candidate window / next candidate, Ctrl+P the
 //! previous one, `a s d f j k l` pick one, Ctrl+G cancels.
@@ -415,6 +417,9 @@ impl PartLayer {
         if ch == 'l' {
             return self.switch_to_ascii(engine);
         }
+        if ch == 'q' && !matches!(engine.state(), InputState::Empty) {
+            return self.commit_katakana(engine);
+        }
         if ch == ',' || ch == '.' {
             let result = self.close(engine);
             self.enter(engine, PartMode::Plain);
@@ -464,6 +469,9 @@ impl PartLayer {
                 _ => engine.process_key(key),
             };
         };
+        if ch == 'q' {
+            return self.commit_katakana(engine);
+        }
         if let Some(index) = SELECT_KEYS.find(ch).filter(|_| !key.modifiers.shift_key) {
             let result = engine.select_candidate_on_page(index);
             if matches!(engine.state(), InputState::Empty) {
@@ -566,6 +574,21 @@ impl PartLayer {
         preedit.set_caret(caret);
         out.actions.push(EngineAction::UpdatePreedit(preedit));
         out
+    }
+
+    /// `q`: commit the part's reading in katakana, and learn it so the live
+    /// conversion offers it next time (てすと → テスト).
+    fn commit_katakana(&mut self, engine: &mut InputMethodEngine) -> EngineResult {
+        engine.settle_pending();
+        let reading = engine.take_reading();
+        let text = mimir_engine::hiragana_to_katakana(&reading);
+        engine.learn(&reading, &text);
+        self.recent = Some((reading, text.clone()));
+        self.enter(engine, PartMode::Plain);
+        EngineResult::consumed()
+            .with_action(EngineAction::Commit(text))
+            .with_action(EngineAction::HideCandidates)
+            .with_action(EngineAction::HideAuxText)
     }
 
     fn commit_conversion(&mut self, engine: &mut InputMethodEngine) -> EngineResult {
@@ -750,6 +773,17 @@ mod tests {
         assert_eq!(feed(&mut layer, &mut engine, "ha,"), "は、");
         assert_eq!(feed(&mut layer, &mut engine, "l"), "");
         assert_eq!(layer.mode(), PartMode::Ascii);
+    }
+
+    #[test]
+    fn q_commits_the_part_in_katakana() {
+        let (mut layer, mut engine) = setup();
+        assert_eq!(feed(&mut layer, &mut engine, "noTesutoq"), "のテスト");
+        assert_eq!(layer.mode(), PartMode::Plain);
+        // From the candidate window too, and a trailing n settles as ン.
+        feed(&mut layer, &mut engine, "Pan");
+        layer.process_key(&mut engine, &ctrl('n'));
+        assert_eq!(feed(&mut layer, &mut engine, "q"), "パン");
     }
 
     #[test]
