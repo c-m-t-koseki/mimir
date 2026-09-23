@@ -174,7 +174,7 @@ Swift/InputMethodKit frontend. All IME state lives in mimir-imserver (spawned as
 - `main.swift` — IMKServer startup, engine process spawn, wake-from-sleep restart, SIGPIPE handling
 - `MimirInputController.swift` — IMKInputController; translates keys, applies engine actions (preedit/candidates/commit), JIS かな key and right-Command tap return to hiragana (exit katakana mode)
 - `KeyCodeMap.swift` — NSEvent → XKB keysym translation (same keysym representation as fcitx5), RightCommandTapDetector
-- `resources/*.tiff` — template menu icon (か), regenerated via `swift scripts/generate_icons.swift`; `resources/{ja,en}.lproj/InfoPlist.strings` localize the input mode name shown in the input menu
+- `resources/*.tiff` — template menu icon (あ), regenerated via `swift scripts/generate_icons.swift`; `resources/{ja,en}.lproj/InfoPlist.strings` localize the input mode name shown in the input menu
 - `EngineProcess.swift` — child process lifecycle: crash restart with exponential backoff, EOF-based clean shutdown (lets the server save its learning cache)
 - `EngineClient.swift` — JSON-RPC transport (sync for process_key, async for fire-and-forget)
 - `EngineProtocol.swift` — Swift mirror of `mimir-im/core/src/server/protocol.rs` (keep in sync; protocol_version guards breaking changes)

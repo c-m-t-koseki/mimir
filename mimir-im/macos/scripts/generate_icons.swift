@@ -60,5 +60,5 @@ func writeIcon(glyph: String, to url: URL) {
 }
 
 let outputDir = URL(fileURLWithPath: CommandLine.arguments.count > 1 ? CommandLine.arguments[1] : "resources")
-writeIcon(glyph: "か", to: outputDir.appendingPathComponent("mimir.tiff"))
+writeIcon(glyph: "あ", to: outputDir.appendingPathComponent("mimir.tiff"))
 writeIcon(glyph: "A", to: outputDir.appendingPathComponent("mimir-roman.tiff"))
