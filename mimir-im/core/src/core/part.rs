@@ -237,6 +237,7 @@ impl PartLayer {
             .then(|| deletes_a_lone_kana(engine));
         }
         let result = self.dispatch(engine, key);
+        self.learn_pick(engine);
         let mut result = plain_aux(engine, result);
         self.decorate(engine, &mut result);
         // A Ctrl chord the engine leaves unbound must not reach the
@@ -528,7 +529,7 @@ impl PartLayer {
             (_, InputState::Empty) => EngineResult::consumed(),
             (PartMode::Part, InputState::Composing { .. }) => {
                 engine.settle_pending();
-                self.learn_part(engine);
+                self.note_part(engine);
                 engine.commit_unlearned_result()
             }
             (PartMode::Part, _) => {
@@ -543,31 +544,46 @@ impl PartLayer {
         }
     }
 
-    /// Learn the part about to be committed. A one-char result (て, 中) is
-    /// no word of its own: it is learned joined to what was committed just
-    /// before it (入力 + 中 → にゅうりょくちゅう→入力中), or not at all.
-    fn learn_part(&mut self, engine: &mut InputMethodEngine) {
-        let Some((reading, text)) = engine.composing_commit_preview() else {
+    /// A part about to be committed as shown: nothing to learn (the model
+    /// gives it again), but it is what a later one-char pick joins to.
+    fn note_part(&mut self, engine: &mut InputMethodEngine) {
+        let Some((reading, text)) = engine
+            .composing_commit_preview()
+            .filter(|(_, t)| !t.is_empty())
+        else {
             return;
         };
-        if text.is_empty() {
-            return;
-        }
-        let (reading, text) = if text.chars().count() == 1 {
-            let Some((prev_reading, prev_text)) = self.recent.take() else {
-                return;
-            };
-            let joined = (
-                format!("{prev_reading}{reading}"),
-                format!("{prev_text}{text}"),
-            );
-            engine.learn_after(&joined.0, &joined.1, &prev_text);
-            joined
-        } else {
-            engine.learn(&reading, &text);
-            (reading, text)
+        self.note_recent(reading, text);
+    }
+
+    /// `recent` after committing `text`: a one-char part (て, 中) joins what
+    /// came just before (入力 + 中).
+    fn note_recent(&mut self, reading: String, text: String) {
+        let (reading, text) = match self.recent.take() {
+            Some((r, t)) if text.chars().count() == 1 => (r + &reading, t + &text),
+            _ => (reading, text),
         };
         self.recent = (text.chars().count() <= RECENT_MAX_CHARS).then_some((reading, text));
+    }
+
+    /// A candidate picked over the model's answer, which the engine learned
+    /// — unless it is one char (中): no word of its own, it is learned
+    /// joined to what was committed just before it (入力 + 中 →
+    /// にゅうりょくちゅう→入力中).
+    fn learn_pick(&mut self, engine: &mut InputMethodEngine) {
+        let Some((reading, text)) = engine.take_chosen() else {
+            return;
+        };
+        if text.chars().count() == 1
+            && let Some((prev_reading, prev_text)) = self.recent.clone()
+        {
+            engine.learn_after(
+                &format!("{prev_reading}{reading}"),
+                &format!("{prev_text}{text}"),
+                &prev_text,
+            );
+        }
+        self.note_recent(reading, text);
     }
 
     /// Plain kana committed after a part extends `recent` (会議 + の); any
@@ -1760,15 +1776,26 @@ mod tests {
     }
 
     #[test]
-    fn one_char_part_is_learned_joined_to_what_came_before() {
+    fn only_a_pick_is_learned_and_one_char_joins_what_came_before() {
         let (mut layer, mut engine) = setup();
         engine_learning_on(&mut engine);
-        // No model: parts commit their reading. かいぎ, plain の, then て.
-        feed(&mut layer, &mut engine, "Kaigi noTe ");
-        let learned = learned(&engine);
-        assert!(learned.contains(&("かいぎ".into(), "かいぎ".into())));
-        assert!(learned.contains(&("かいぎのて".into(), "かいぎのて".into())));
-        assert!(!learned.iter().any(|(r, _)| r == "て"));
+        // No model: parts commit their reading, which teaches nothing.
+        feed(&mut layer, &mut engine, "Kaigi noTe");
+        // Picking テ over て: learned, joined to かいぎ + の.
+        layer.process_key(&mut engine, &ctrl('n'));
+        assert_eq!(feed(&mut layer, &mut engine, "k"), "テ");
+        let got = learned(&engine);
+        assert!(!got.iter().any(|(r, _)| r == "かいぎ"), "{got:?}");
+        assert!(
+            got.contains(&("かいぎのて".into(), "かいぎのテ".into())),
+            "{got:?}"
+        );
+        assert!(!got.iter().any(|(r, _)| r == "て"));
+        // The window's own answer, committed, teaches nothing either.
+        feed(&mut layer, &mut engine, "Kaigi");
+        layer.process_key(&mut engine, &ctrl('n'));
+        feed(&mut layer, &mut engine, "j");
+        assert!(!learned(&engine).iter().any(|(r, _)| r == "かいぎ"));
     }
 
     #[test]

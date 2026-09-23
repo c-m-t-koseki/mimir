@@ -117,6 +117,13 @@ pub struct InputMethodEngine {
     converters: Converters,
     /// Surrounding text context from the editor (text around cursor)
     surrounding_context: Option<SurroundingContext>,
+    /// What the candidate window opened on: the model's (or live
+    /// conversion's) own answer. Committing it teaches nothing — the model
+    /// gives it again — so only a different pick is learned.
+    conversion_origin: String,
+    /// The last pick learned, `(reading, surface)`, for the part layer
+    /// (it learns a one-char pick joined to what came before).
+    chosen: Option<(String, String)>,
     /// Engine configuration
     config: EngineConfig,
     /// Conversion timing and adaptive model metrics
@@ -173,6 +180,8 @@ impl InputMethodEngine {
                 date: DateRewriter::new(mimir_engine::DateConfig::default()),
             },
             surrounding_context: None,
+            conversion_origin: String::new(),
+            chosen: None,
             config: EngineConfig::default(),
             metrics: ConversionMetrics::default(),
             mode: ModeState::default(),
@@ -401,6 +410,11 @@ impl InputMethodEngine {
     }
 
     /// Teach `reading → surface` as if the user had converted it here.
+    /// The pick the last conversion commit learned, if it learned one.
+    pub fn take_chosen(&mut self) -> Option<(String, String)> {
+        self.chosen.take()
+    }
+
     pub fn learn(&mut self, reading: &str, surface: &str) {
         self.record_learning(reading, surface);
     }
@@ -852,9 +866,10 @@ impl InputMethodEngine {
     pub fn commit(&mut self) -> String {
         let text = match &self.state {
             InputState::Empty => String::new(),
+            // The composition as shown is the model's own answer: nothing
+            // to learn.
             InputState::Composing { .. } => {
-                let (reading, text) = self.resolve_composing_commit();
-                self.record_learning(&reading, &text);
+                let (_, text) = self.resolve_composing_commit();
                 self.end_composition();
                 text
             }
