@@ -240,6 +240,7 @@ impl ImServer {
                 PartMode::Plain | PartMode::Part => "kana",
             },
             hint: self.part.hint(&self.engine),
+            select_keys: self.part.picks_by_letter(),
         })
         .map_err(internal_error)
     }

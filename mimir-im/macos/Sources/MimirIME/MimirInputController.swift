@@ -104,6 +104,7 @@ class MimirInputController: IMKInputController {
             // freezing input.
             return false
         }
+        Self.candidateWindow.showsKeys = result.selectKeys ?? true
         apply(actions: result.actions, client: client)
         showModeChange(result.mode, client: client)
         showHint(result.hint, client: client)

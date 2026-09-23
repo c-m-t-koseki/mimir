@@ -147,6 +147,9 @@ pub struct KeyResult {
     /// completions or the reading); absent when there is nothing to show.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hint: Option<String>,
+    /// Whether the select keys (a–l) pick from the candidate window; the
+    /// frontend labels its rows with them only then.
+    pub select_keys: bool,
 }
 
 /// `set_config`: write `[section] key = value` into config.toml. Takes
