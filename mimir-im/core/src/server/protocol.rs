@@ -152,6 +152,8 @@ pub struct KeyResult {
     /// Whether the select keys (a–l) pick from the candidate window; the
     /// frontend labels its rows with them only then.
     pub select_keys: bool,
+    /// The select keys, in page order (`[keys] select`).
+    pub select_chars: String,
     /// `[display] candidate_layout`: "vertical" or "keyboard".
     pub candidate_layout: CandidateLayout,
     /// `[display] reading_display = "ruby"`: the reading to set above the

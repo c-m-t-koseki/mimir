@@ -13,6 +13,7 @@ use crate::config::settings::CandidateLayout;
 use crate::core::candidate::CandidateList;
 use crate::core::engine::{EngineAction, EngineConfig, EngineResult, InputMethodEngine};
 use crate::core::keycode::{KeyEvent, Keysym};
+use crate::core::keymap::Keymap;
 use crate::core::part::{PartLayer, PartMode};
 use crate::core::state::InputState;
 
@@ -55,6 +56,7 @@ impl ImServer {
         let mut engine = InputMethodEngine::with_config(config);
         let mut part = PartLayer::with_hint(settings.display.part_hint)
             .with_skk_style(settings.conversion.skk_style)
+            .with_keys(Keymap::parse(&settings.keys).unwrap_or_default())
             .with_reading_display(
                 settings.display.reading_display,
                 settings.display.tail_chars,
@@ -149,6 +151,7 @@ impl ImServer {
                     "reading_display": settings.display.reading_display,
                     "tail_delay_ms": settings.display.tail_delay_ms,
                     "tail_delete_delay_ms": settings.display.tail_delete_delay_ms,
+                    "keys": settings.keys,
                     "predictive": settings.conversion.predictive,
                     "skk_style": settings.conversion.skk_style,
                     "model": settings.conversion.model,
@@ -259,6 +262,7 @@ impl ImServer {
             },
             hint: self.part.hint(&self.engine),
             select_keys: self.part.picks_by_letter(),
+            select_chars: self.part.select_keys(),
             candidate_layout: self.candidate_layout,
             ruby: self
                 .part
