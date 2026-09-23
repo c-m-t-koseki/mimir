@@ -36,6 +36,7 @@ fn slash_date(text: &str) -> bool {
 fn registered_phrase_surfaces_date_candidates() {
     let mut engine = date_engine(
         DateConfig {
+            enabled: true,
             formats: Vec::new(),
             phrases: vec![DatePhrase {
                 reading: "きょう".to_string(),
