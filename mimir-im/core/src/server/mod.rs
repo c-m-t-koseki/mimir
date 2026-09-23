@@ -183,10 +183,13 @@ impl ImServer {
                 self.candidate_layout = settings.display.candidate_layout;
                 Ok(json!({"restart": false}))
             }
-            "learning_list" => {
-                let entries: Vec<_> = self
-                    .engine
-                    .learning_entries()
+            "learning_list" | "history_list" => {
+                let entries = if method == "history_list" {
+                    self.engine.history_entries()
+                } else {
+                    self.engine.learning_entries()
+                };
+                let entries: Vec<_> = entries
                     .into_iter()
                     .map(|(reading, surface, frequency, last_access)| {
                         json!({"reading": reading, "surface": surface,
@@ -204,6 +207,15 @@ impl ImServer {
             }
             "learning_clear" => {
                 self.engine.learning_clear();
+                Ok(json!({}))
+            }
+            "history_remove" => {
+                let params: LearningEntryParams = parse_params(params)?;
+                let removed = self.engine.history_remove(&params.reading, &params.surface);
+                Ok(json!({ "removed": removed }))
+            }
+            "history_clear" => {
+                self.engine.history_clear();
                 Ok(json!({}))
             }
             "save_learning" => {

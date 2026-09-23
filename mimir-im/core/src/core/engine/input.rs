@@ -395,7 +395,9 @@ impl InputMethodEngine {
                 .with_action(EngineAction::HideAuxText);
         }
 
-        self.record_learning(&reading, &text);
+        // The composition as shown is the model's own answer: nothing to
+        // learn, but it completes later input.
+        self.record_history(&reading, &text);
         self.end_composition();
 
         // HideCandidates is required here: the auto-suggest/live-conversion

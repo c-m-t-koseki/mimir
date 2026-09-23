@@ -162,6 +162,11 @@ impl InputMethodEngine {
         candidates: CandidateList,
     ) -> EngineResult {
         let selected_text = candidates.selected_text().unwrap_or(reading).to_string();
+        // A fresh window (not a source filter over an open one) opens on the
+        // answer that needs no learning.
+        if !matches!(self.state, InputState::Conversion { .. }) {
+            self.conversion_origin = selected_text.clone();
+        }
 
         let preedit = Preedit::with_text_highlighted(&selected_text);
 
@@ -737,11 +742,17 @@ impl InputMethodEngine {
         }
     }
 
-    /// Record the committed conversion in the learning cache and end the
-    /// composition.
+    /// Record the committed conversion in the learning cache — when it is
+    /// not what the window opened on — and end the composition.
     pub(super) fn finish_conversion(&mut self, text: &str, reading: &Option<String>) {
         if let Some(reading) = reading {
+            self.record_history(reading, text);
+        }
+        if let Some(reading) = reading
+            && text != self.conversion_origin
+        {
             self.record_learning(reading, text);
+            self.chosen = Some((reading.clone(), text.to_string()));
         }
         self.end_composition();
     }
