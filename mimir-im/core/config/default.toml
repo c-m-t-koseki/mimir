@@ -178,3 +178,26 @@ phrases = [
     { reading = "いま", formats = ["{HOUR}:{MINUTE}", "{HOUR:bare}時{MINUTE:bare}分", "{AMPM}{HOUR12}時{MINUTE:bare}分"] },
     { reading = "にちじ", formats = ["{YEAR}/{MONTH}/{DATE} {HOUR}:{MINUTE}", "{YEAR}年{MONTH:bare}月{DATE:bare}日{HOUR:bare}時{MINUTE:bare}分"] },
 ]
+
+# 漢字パート入力のキー（macOS）。Emacs 式に書く: C-n（Ctrl+N）、S-Tab（Shift+Tab）、
+# 名前のあるキー（Space Return Escape Tab BackSpace Delete Left Right Up Down Home
+# End PageUp PageDown）、または1文字（q、/）。空白で区切って複数書ける。
+[keys]
+kana = "C-j"            # かな入力へ
+ascii = "l"             # 英数（直接入力）へ
+abbrev = "/"            # 英字のまま変換（SKK の abbrev）
+discard = "C-u"         # 入力中のものを捨てる
+convert = "C-n"         # 候補窓を開く
+next = "C-n C-i Tab"    # 次の候補
+prev = "C-p S-Tab"      # 前の候補
+cancel = "C-g Escape"   # 候補窓を閉じる / パートを取り消す
+register = "C-r"        # 単語登録
+complete = "C-i Tab"    # 以前入力した語で補完
+katakana = "q"          # カタカナで確定
+close = "Space"         # パートを閉じて確定（区切ったときは左側）
+commit = "Return"       # すべて確定
+left = "C-b Left"       # 変換する範囲を1文字縮める
+right = "C-f Right"     # 1文字伸ばす
+home = "C-a Home"       # 先頭の1文字だけにする
+end = "C-e End"         # 全体にする
+select = "jkfduire"     # 候補を選ぶキー（8文字、ページの順）

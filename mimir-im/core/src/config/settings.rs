@@ -15,6 +15,8 @@ use mimir_engine::{
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error, warn};
 
+use crate::core::keymap::KeysSettings;
+
 /// Default configuration TOML embedded from config/default.toml
 const DEFAULT_CONFIG_TOML: &str = include_str!("../../config/default.toml");
 
@@ -33,6 +35,8 @@ pub struct Settings {
     pub width: WidthRules,
     /// Date/time phrases and their formats
     pub date: DateConfig,
+    /// The part layer's key bindings (macOS)
+    pub keys: KeysSettings,
     /// Conversion models, keyed by the name `model` / `light_model` refer to
     pub models: BTreeMap<String, ModelDef>,
     /// Named model combinations (`[profiles.<name>]`) the settings window
@@ -406,6 +410,11 @@ impl Settings {
     /// `load`, falling back to the defaults when the config cannot be read:
     /// an IME must start. The failure is logged, so a typo never silently
     /// resets every setting.
+    /// The shipped `[keys]`.
+    pub fn default_keys() -> KeysSettings {
+        Self::default().keys
+    }
+
     pub fn load_or_default() -> Self {
         Self::load().unwrap_or_else(|e| {
             error!("config.toml not loaded, using defaults: {e:#}");
@@ -417,6 +426,9 @@ impl Settings {
     pub fn load_from(path: &Path) -> Result<Self> {
         let content = fs::read_to_string(path)?;
         let settings = parse_with_defaults(&content)?;
+        if let Err(e) = settings.keys.validate() {
+            warn!("[keys] {e:#}; the shipped keys are used");
+        }
         // Surface broken model entries now, without failing the load: a key
         // that is never used must not cost the rest of the config.
         for key in settings.models.keys() {
@@ -472,7 +484,9 @@ impl Settings {
             fs::create_dir_all(parent)?;
         }
         fs::write(path, &after)?;
-        if let Err(e) = Self::load_from(path) {
+        // Bad bindings only warn at load (the rest of the file must still
+        // count), but are refused here, where someone is typing them.
+        if let Err(e) = Self::load_from(path).and_then(|s| s.keys.validate()) {
             fs::write(path, before)?;
             return Err(e.context(format!("[{section}] {key} rejected")));
         }

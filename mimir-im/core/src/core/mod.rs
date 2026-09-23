@@ -5,6 +5,7 @@
 pub mod candidate;
 pub mod engine;
 pub mod keycode;
+pub mod keymap;
 pub mod part;
 pub mod preedit;
 pub mod state;
