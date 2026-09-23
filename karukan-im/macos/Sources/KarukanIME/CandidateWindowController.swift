@@ -1,25 +1,28 @@
 import Cocoa
 
-/// Swiss-style palette and type scale shared by the candidate window and
-/// the mode badge: monochrome, one red accent, hierarchy by size and weight.
+/// Swiss-style palette and type scale shared by the IME's panels:
+/// monochrome, one red accent, flush-left on an 8pt grid, hierarchy by
+/// size and weight only, square corners.
 enum Swiss {
     static let accent = NSColor(srgbRed: 0.890, green: 0.024, blue: 0.075, alpha: 1)
-    static let rule = NSColor.labelColor.withAlphaComponent(0.25)
+    static let hairline = NSColor.labelColor.withAlphaComponent(0.15)
     /// 8pt baseline grid.
     static let grid: CGFloat = 8
     static let candidateFont = NSFont.systemFont(ofSize: 17)
     static let selectedFont = NSFont.systemFont(ofSize: 17, weight: .semibold)
-    static let labelFont = NSFont.monospacedSystemFont(ofSize: 11, weight: .medium)
+    static let keyFont = NSFont(name: "HelveticaNeue-Medium", size: 11)
+        ?? NSFont.systemFont(ofSize: 11, weight: .medium)
+    static let headFont = NSFont.systemFont(ofSize: 11, weight: .semibold)
     static let smallFont = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular)
 
-    /// A flat box with a hairline rule and a 2pt corner, colors resolved
-    /// per appearance by AppKit.
+    /// A flat square box with a hairline edge, colors resolved per
+    /// appearance by AppKit.
     static func box(fill: NSColor = .textBackgroundColor) -> NSBox {
         let box = NSBox()
         box.boxType = .custom
-        box.borderColor = rule
+        box.borderColor = hairline
         box.borderWidth = 1
-        box.cornerRadius = 2
+        box.cornerRadius = 0
         box.fillColor = fill
         box.titlePosition = .noTitle
         box.contentViewMargins = .zero
@@ -43,21 +46,115 @@ enum Swiss {
     }
 }
 
+/// The candidate list, drawn directly so every element sits on the grid:
+///
+///     かいぎ                     1 / 3     header: reading, page (right)
+///     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━     2pt rule
+///     [a] 会議
+///     [s] 懐疑                     [旧]    selected: key in a red square
+///
+/// Keys are the ones that pick the row (`a s d f j k l`, see `part.rs`);
+/// descriptions share one flush-right column.
+final class CandidateListView: NSView {
+    struct Row {
+        let key: String
+        let text: String
+        let note: String?
+        let selected: Bool
+    }
+
+    var header: String?
+    var page: String?
+    var rows: [Row] = []
+
+    private let pad = Swiss.grid * 2
+    private let rowHeight = Swiss.grid * 4
+    private let keySide = Swiss.grid * 2
+    private var textX: CGFloat { pad + keySide + Swiss.grid * 1.5 }
+    private var hasHeader: Bool { header != nil || page != nil }
+    private var headerHeight: CGFloat { hasHeader ? Swiss.grid * 3 + 2 : 0 }
+
+    override var isFlipped: Bool { true }
+
+    private func size(_ text: String, _ font: NSFont) -> NSSize {
+        (text as NSString).size(withAttributes: [.font: font])
+    }
+
+    func fittingContentSize() -> NSSize {
+        let textW = rows.map { size($0.text, Swiss.selectedFont).width }.max() ?? 0
+        let noteW = rows.compactMap { $0.note.map { size($0, Swiss.smallFont).width } }.max()
+        var width = textX + textW + pad
+        if let noteW { width += Swiss.grid * 3 + noteW }
+        let headW =
+            pad * 2 + size(header ?? "", Swiss.headFont).width
+            + size(page ?? "", Swiss.smallFont).width + Swiss.grid * 3
+        width = max(width, headW, Swiss.grid * 24)
+        let height = Swiss.grid + headerHeight + CGFloat(rows.count) * rowHeight + Swiss.grid
+        return NSSize(width: ceil(width), height: height)
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        var y = Swiss.grid
+        if hasHeader {
+            let head = header ?? ""
+            (head as NSString).draw(
+                at: NSPoint(x: pad, y: y),
+                withAttributes: [.font: Swiss.headFont, .foregroundColor: NSColor.labelColor])
+            if let page {
+                let w = size(page, Swiss.smallFont).width
+                (page as NSString).draw(
+                    at: NSPoint(x: bounds.width - pad - w, y: y + 1),
+                    withAttributes: [
+                        .font: Swiss.smallFont, .foregroundColor: NSColor.secondaryLabelColor,
+                    ])
+            }
+            y += Swiss.grid * 3
+            NSColor.labelColor.setFill()
+            NSRect(x: pad, y: y - 4, width: bounds.width - pad * 2, height: 2).fill()
+            y += 2
+        }
+        for row in rows {
+            let mid = y + rowHeight / 2
+            let square = NSRect(x: pad, y: mid - keySide / 2, width: keySide, height: keySide)
+            if row.selected {
+                Swiss.accent.setFill()
+                square.fill()
+            }
+            let keySize = size(row.key, Swiss.keyFont)
+            (row.key as NSString).draw(
+                at: NSPoint(x: square.midX - keySize.width / 2, y: square.midY - keySize.height / 2),
+                withAttributes: [
+                    .font: Swiss.keyFont,
+                    .foregroundColor: row.selected ? NSColor.white : NSColor.tertiaryLabelColor,
+                ])
+            let font = row.selected ? Swiss.selectedFont : Swiss.candidateFont
+            let textH = size(row.text, font).height
+            (row.text as NSString).draw(
+                at: NSPoint(x: textX, y: mid - textH / 2),
+                withAttributes: [.font: font, .foregroundColor: NSColor.labelColor])
+            if let note = row.note {
+                let noteSize = size(note, Swiss.smallFont)
+                (note as NSString).draw(
+                    at: NSPoint(x: bounds.width - pad - noteSize.width, y: mid - noteSize.height / 2),
+                    withAttributes: [
+                        .font: Swiss.smallFont, .foregroundColor: NSColor.secondaryLabelColor,
+                    ])
+            }
+            y += rowHeight
+        }
+    }
+}
+
 /// Custom candidate window (borderless non-activating NSPanel).
 ///
 /// The engine pre-paginates: `show` receives only the visible page plus
-/// page metadata, so this controller just renders rows. Each row is
-/// `label  candidate  description` on the 8pt grid; the selected row is
-/// marked by a red bar at its left edge, never by a fill. Labels are the
-/// keys that pick the row (`a s d f j k l`, see `part.rs`).
+/// page metadata, so this controller only maps it onto `CandidateListView`.
+/// The aux text (the reading, see `part.rs`) heads the list.
 class CandidateWindowController {
     static let selectKeys = Array("asdfjkl")
-    private static let rowHeight = Swiss.grid * 4
-    private static let minPanelWidth: CGFloat = 160
 
     private let panel: NSPanel
-    private let stackView: NSStackView
-    private var rowViews: [NSView] = []
+    private let listView = CandidateListView()
     private var auxText: String?
 
     private struct PageState {
@@ -72,22 +169,14 @@ class CandidateWindowController {
         panel = Swiss.panel()
         let box = Swiss.box()
         panel.contentView = box
-
-        stackView = NSStackView()
-        stackView.orientation = .vertical
-        stackView.alignment = .leading
-        stackView.spacing = 0
-        stackView.edgeInsets = NSEdgeInsets(
-            top: Swiss.grid, left: 0, bottom: Swiss.grid, right: Swiss.grid * 2)
-        stackView.translatesAutoresizingMaskIntoConstraints = false
-
+        listView.translatesAutoresizingMaskIntoConstraints = false
         let content = box.contentView!
-        content.addSubview(stackView)
+        content.addSubview(listView)
         NSLayoutConstraint.activate([
-            stackView.topAnchor.constraint(equalTo: content.topAnchor),
-            stackView.leadingAnchor.constraint(equalTo: content.leadingAnchor),
-            stackView.trailingAnchor.constraint(equalTo: content.trailingAnchor),
-            stackView.bottomAnchor.constraint(equalTo: content.bottomAnchor),
+            listView.topAnchor.constraint(equalTo: content.topAnchor),
+            listView.leadingAnchor.constraint(equalTo: content.leadingAnchor),
+            listView.trailingAnchor.constraint(equalTo: content.trailingAnchor),
+            listView.bottomAnchor.constraint(equalTo: content.bottomAnchor),
         ])
     }
 
@@ -105,7 +194,7 @@ class CandidateWindowController {
         render(cursorRect: cursorRect)
     }
 
-    /// Update the aux footer; re-renders in place if the window is visible.
+    /// Update the aux header; re-renders in place if the window is visible.
     /// Pass `deferRender: true` when a `show`/`hide` follows in the same
     /// action batch, so the panel is rendered once per batch instead of
     /// once for the aux change and again for the candidates.
@@ -122,124 +211,39 @@ class CandidateWindowController {
     }
 
     private func render(cursorRect: NSRect?) {
-        clearRows()
         guard let state = pageState else {
             hide()
             return
         }
-        // An empty list still renders while the aux footer has text: a
-        // source-filtered view narrowed to an empty source must show its
-        // 「候補なし」 footer, not a silently vanishing panel.
+        // An empty list still renders while the aux has text: a
+        // source-filtered view narrowed to an empty source must not vanish.
         if state.candidates.isEmpty && (auxText ?? "").isEmpty {
             hide()
             return
         }
-
-        for (index, candidate) in state.candidates.enumerated() {
-            addRow(candidate, index: index, selected: index == state.cursor)
+        listView.header = auxText.flatMap { $0.isEmpty ? nil : $0 }
+        listView.page = state.totalPages > 1 ? "\(state.page + 1) / \(state.totalPages)" : nil
+        listView.rows = state.candidates.enumerated().map { index, candidate in
+            CandidateListView.Row(
+                key: index < Self.selectKeys.count ? String(Self.selectKeys[index]) : "",
+                text: candidate.text,
+                note: candidate.description,
+                selected: index == state.cursor)
         }
-        var footer: [String] = []
-        if state.totalPages > 1 {
-            footer.append("\(state.page + 1) / \(state.totalPages)")
-        }
-        if let aux = auxText, !aux.isEmpty {
-            footer.append(aux)
-        }
-        if !footer.isEmpty {
-            addFooter(footer.joined(separator: "   "))
-        }
-
-        positionPanel(cursorRect: cursorRect)
-    }
-
-    private func clearRows() {
-        for view in rowViews {
-            stackView.removeArrangedSubview(view)
-            view.removeFromSuperview()
-        }
-        rowViews.removeAll()
-    }
-
-    private func addRow(_ candidate: CandidateItem, index: Int, selected: Bool) {
-        let bar = NSBox()
-        bar.boxType = .custom
-        bar.borderWidth = 0
-        bar.fillColor = selected ? Swiss.accent : .clear
-
-        let key = index < Self.selectKeys.count ? String(Self.selectKeys[index]) : ""
-        let label = NSTextField(labelWithString: key)
-        label.font = Swiss.labelFont
-        label.textColor = selected ? Swiss.accent : .tertiaryLabelColor
-
-        let text = NSTextField(labelWithString: candidate.text)
-        text.font = selected ? Swiss.selectedFont : Swiss.candidateFont
-        text.textColor = .labelColor
-
-        let row = NSStackView(views: [bar, label, text])
-        row.orientation = .horizontal
-        row.alignment = .centerY
-        row.spacing = Swiss.grid * 1.5
-        row.setCustomSpacing(Swiss.grid * 1.5 - 3, after: bar)
-        if let description = candidate.description {
-            let note = NSTextField(labelWithString: description)
-            note.font = Swiss.smallFont
-            note.textColor = .secondaryLabelColor
-            row.addArrangedSubview(note)
-            row.setCustomSpacing(Swiss.grid * 2, after: text)
-        }
-        row.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            row.heightAnchor.constraint(equalToConstant: Self.rowHeight),
-            bar.widthAnchor.constraint(equalToConstant: 3),
-            bar.heightAnchor.constraint(equalTo: row.heightAnchor),
-            label.widthAnchor.constraint(equalToConstant: Swiss.grid),
-        ])
-        stackView.addArrangedSubview(row)
-        rowViews.append(row)
-    }
-
-    private func addFooter(_ text: String) {
-        let rule = NSBox()
-        rule.boxType = .custom
-        rule.borderWidth = 0
-        rule.fillColor = Swiss.rule
-        rule.translatesAutoresizingMaskIntoConstraints = false
-
-        let label = NSTextField(labelWithString: text)
-        label.font = Swiss.smallFont
-        label.textColor = .secondaryLabelColor
-
-        let footer = NSStackView(views: [rule, label])
-        footer.orientation = .vertical
-        footer.alignment = .leading
-        footer.spacing = Swiss.grid
-        footer.edgeInsets = NSEdgeInsets(top: Swiss.grid, left: Swiss.grid * 2, bottom: 0, right: 0)
-        footer.translatesAutoresizingMaskIntoConstraints = false
-        stackView.addArrangedSubview(footer)
-        NSLayoutConstraint.activate([
-            rule.heightAnchor.constraint(equalToConstant: 1),
-            rule.widthAnchor.constraint(equalTo: footer.widthAnchor, constant: -Swiss.grid * 2),
-            footer.widthAnchor.constraint(equalTo: stackView.widthAnchor, constant: -Swiss.grid * 2),
-        ])
-        rowViews.append(footer)
+        listView.needsDisplay = true
+        positionPanel(cursorRect: cursorRect, size: listView.fittingContentSize())
     }
 
     private var lastCursorRect: NSRect = .zero
 
-    private func positionPanel(cursorRect: NSRect?) {
+    private func positionPanel(cursorRect: NSRect?, size: NSSize) {
         if let rect = cursorRect {
             lastCursorRect = rect
         }
         let cursorRect = lastCursorRect
 
-        stackView.layoutSubtreeIfNeeded()
-        let contentSize = stackView.fittingSize
-        let panelWidth = max(contentSize.width, Self.minPanelWidth)
-        let panelHeight = contentSize.height
-
         guard cursorRect != .zero else {
-            panel.setFrame(
-                NSRect(x: 100, y: 100, width: panelWidth, height: panelHeight), display: true)
+            panel.setFrame(NSRect(origin: NSPoint(x: 100, y: 100), size: size), display: true)
             panel.orderFront(nil)
             return
         }
@@ -248,22 +252,18 @@ class CandidateWindowController {
         // the screen.
         let showAbove: Bool
         if let screen = NSScreen.main {
-            showAbove = cursorRect.origin.y - panelHeight < screen.visibleFrame.origin.y
+            showAbove = cursorRect.origin.y - size.height < screen.visibleFrame.origin.y
         } else {
             showAbove = false
         }
 
         let gap: CGFloat = 4
-        let originY: CGFloat
-        if showAbove {
-            originY = cursorRect.origin.y + cursorRect.size.height + gap
-        } else {
-            originY = cursorRect.origin.y - panelHeight - gap
-        }
-
+        let originY =
+            showAbove
+            ? cursorRect.maxY + gap
+            : cursorRect.origin.y - size.height - gap
         panel.setFrame(
-            NSRect(x: cursorRect.origin.x, y: originY, width: panelWidth, height: panelHeight),
-            display: true)
+            NSRect(origin: NSPoint(x: cursorRect.origin.x, y: originY), size: size), display: true)
         panel.orderFront(nil)
     }
 }
