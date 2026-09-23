@@ -7,6 +7,11 @@
 //! which typing goes on as before. `l` switches to direct ASCII input
 //! and Ctrl+J returns to kana, as in SKK.
 //!
+//! Moving the caret inside a part (Ctrl+B / Ctrl+F, ← →) sets how much of
+//! it converts: the reading left of the caret converts, the rest waits in
+//! hiragana. Space or a picked candidate commits the left side and the
+//! rest goes on as the part; anything else ending the part commits both.
+//!
 //! `q` inside a part commits its reading in katakana, as in SKK. `/` opens
 //! SKK's abbrev input, marked ▽ as there: letters go in as typed, Space
 //! converts them (github → GitHub), Enter commits them as they are.
@@ -55,6 +60,9 @@ pub struct PartLayer {
     hint: PartHint,
     /// The open part is abbrev input (`/`).
     abbrev: bool,
+    /// The part's reading right of the caret, held out of the conversion
+    /// (the engine composes only the left side).
+    split: Option<String>,
     /// The candidate window's selection was moved (Ctrl+N/P): a–l then
     /// type on instead of picking.
     stepped: bool,
@@ -101,6 +109,7 @@ impl PartLayer {
             hint: PartHint::default(),
             skk_style: true,
             abbrev: false,
+            split: None,
             stepped: false,
             register: None,
             recent: None,
@@ -135,6 +144,9 @@ impl PartLayer {
 
     fn enter(&mut self, engine: &mut InputMethodEngine, mode: PartMode) {
         self.mode = mode;
+        if mode != PartMode::Part {
+            self.split = None;
+        }
         engine.set_live_conversion(mode == PartMode::Part);
         if self.abbrev {
             self.abbrev = false;
@@ -163,6 +175,9 @@ impl PartLayer {
         let mut result = plain_aux(engine, result);
         if self.abbrev {
             mark_abbrev(engine, &mut result);
+        }
+        if let Some(tail) = &self.split {
+            show_split(tail, &mut result);
         }
         // A Ctrl chord the engine leaves unbound must not reach the
         // application mid-composition: its text edit (Ctrl+K, Ctrl+W, …)
@@ -277,6 +292,63 @@ impl PartLayer {
     /// Commit whatever is open: a part commits its conversion (and learns
     /// it), plain kana commits as typed.
     fn close(&mut self, engine: &mut InputMethodEngine) -> EngineResult {
+        let result = self.close_head(engine);
+        // The reading held right of the caret goes too, converted.
+        match self.split.take() {
+            Some(tail) => {
+                engine.reopen(&tail);
+                merge(result, self.close_head(engine))
+            }
+            None => result,
+        }
+    }
+
+    /// Commit the part's left side (all of it without a split), keeping
+    /// what is right of the caret for the part that goes on.
+    fn close_keeping_tail(&mut self, engine: &mut InputMethodEngine) -> EngineResult {
+        let tail = self.split.take();
+        let result = self.close_head(engine);
+        self.continue_with(engine, tail, result)
+    }
+
+    /// After the left side committed: the rest is the part now, or with no
+    /// rest, back to plain kana.
+    fn continue_with(
+        &mut self,
+        engine: &mut InputMethodEngine,
+        tail: Option<String>,
+        result: EngineResult,
+    ) -> EngineResult {
+        match tail {
+            Some(tail) => {
+                self.enter(engine, PartMode::Part);
+                merge(result, engine.reopen(&tail))
+            }
+            None => {
+                self.enter(engine, PartMode::Plain);
+                result
+            }
+        }
+    }
+
+    /// Ctrl+B / Ctrl+F (← →), Ctrl+A / Ctrl+E: move the caret, which is
+    /// where the conversion stops. At the end, the whole part converts.
+    fn move_split(
+        &mut self,
+        engine: &mut InputMethodEngine,
+        to: impl Fn(usize, usize) -> usize,
+    ) -> EngineResult {
+        engine.settle_pending();
+        let head: Vec<char> = engine.reading().chars().collect();
+        let tail = self.split.take().unwrap_or_default();
+        let all: Vec<char> = head.iter().copied().chain(tail.chars()).collect();
+        let cut = to(head.len(), all.len()).clamp(1, all.len().max(1));
+        let (left, right) = all.split_at(cut.min(all.len()));
+        self.split = (!right.is_empty()).then(|| right.iter().collect());
+        engine.reopen(&left.iter().collect::<String>())
+    }
+
+    fn close_head(&mut self, engine: &mut InputMethodEngine) -> EngineResult {
         match (self.mode, engine.state()) {
             (_, InputState::Empty) => EngineResult::consumed(),
             (PartMode::Part, InputState::Composing { .. }) => {
@@ -416,6 +488,18 @@ impl PartLayer {
                 Keysym::KEY_G | Keysym::KEY_G_UPPER => self.cancel_part(engine),
                 Keysym::KEY_R | Keysym::KEY_R_UPPER => self.start_registration(engine),
                 Keysym::KEY_I | Keysym::KEY_I_UPPER => engine.open_completions(),
+                Keysym::KEY_B | Keysym::KEY_B_UPPER if composing(engine) => {
+                    self.move_split(engine, |cut, _| cut.saturating_sub(1))
+                }
+                Keysym::KEY_F | Keysym::KEY_F_UPPER if composing(engine) => {
+                    self.move_split(engine, |cut, _| cut + 1)
+                }
+                Keysym::KEY_A | Keysym::KEY_A_UPPER if composing(engine) => {
+                    self.move_split(engine, |_, _| 1)
+                }
+                Keysym::KEY_E | Keysym::KEY_E_UPPER if composing(engine) => {
+                    self.move_split(engine, |_, len| len)
+                }
                 _ => engine.process_key(key),
             };
         }
@@ -424,6 +508,12 @@ impl PartLayer {
                 // Tab and Ctrl+I are the same key (and the same thing):
                 // complete from what was typed before.
                 Keysym::TAB => engine.open_completions(),
+                Keysym::LEFT if composing(engine) => {
+                    self.move_split(engine, |cut, _| cut.saturating_sub(1))
+                }
+                Keysym::RIGHT if composing(engine) => self.move_split(engine, |cut, _| cut + 1),
+                Keysym::HOME if composing(engine) => self.move_split(engine, |_, _| 1),
+                Keysym::END if composing(engine) => self.move_split(engine, |_, len| len),
                 Keysym::RETURN => {
                     let result = self.close(engine);
                     self.enter(engine, PartMode::Plain);
@@ -437,9 +527,7 @@ impl PartLayer {
             return engine.feed_romaji(ch);
         }
         if ch == ' ' {
-            let result = self.close(engine);
-            self.enter(engine, PartMode::Plain);
-            return result;
+            return self.close_keeping_tail(engine);
         }
         if let Some(first) = part_opener(key, ch) {
             // A capital in the middle of a syllable (`s` + `E`) is SandS
@@ -504,7 +592,8 @@ impl PartLayer {
     fn after_edit(&mut self, engine: &mut InputMethodEngine, key: &KeyEvent) -> EngineResult {
         let result = engine.process_key(key);
         if matches!(engine.state(), InputState::Empty) {
-            self.enter(engine, PartMode::Plain);
+            let tail = self.split.take();
+            return self.continue_with(engine, tail, result);
         }
         result
     }
@@ -541,7 +630,7 @@ impl PartLayer {
         }
         let Some(ch) = typed_char(key) else {
             return match key.keysym {
-                Keysym::RETURN => self.commit_conversion(engine),
+                Keysym::RETURN => self.commit_conversion_all(engine),
                 Keysym::TAB => {
                     self.stepped = true;
                     engine.process_key(key)
@@ -560,7 +649,8 @@ impl PartLayer {
         {
             let result = engine.select_candidate_on_page(index);
             if matches!(engine.state(), InputState::Empty) {
-                self.enter(engine, PartMode::Plain);
+                let tail = self.split.take();
+                return self.continue_with(engine, tail, result);
             }
             return result;
         }
@@ -571,7 +661,7 @@ impl PartLayer {
             return self.start_part(engine, first);
         }
         // Any other key accepts the selection and keeps typing plain kana.
-        let result = self.commit_conversion(engine);
+        let result = self.commit_conversion_all(engine);
         merge(result, self.process_key(engine, key))
     }
 
@@ -669,15 +759,26 @@ impl PartLayer {
         let text = mimir_engine::hiragana_to_katakana(&reading);
         engine.learn(&reading, &text);
         self.recent = Some((reading, text.clone()));
-        self.enter(engine, PartMode::Plain);
-        EngineResult::consumed()
+        let result = EngineResult::consumed()
             .with_action(EngineAction::Commit(text))
             .with_action(EngineAction::HideCandidates)
-            .with_action(EngineAction::HideAuxText)
+            .with_action(EngineAction::HideAuxText);
+        let tail = self.split.take();
+        self.continue_with(engine, tail, result)
     }
 
+    /// Commit the selected candidate; what is right of the caret goes on
+    /// as the part.
     fn commit_conversion(&mut self, engine: &mut InputMethodEngine) -> EngineResult {
+        let tail = self.split.take();
         let result = engine.process_key(&press(Keysym::RETURN));
+        self.continue_with(engine, tail, result)
+    }
+
+    /// Commit the selected candidate and the rest of the part with it.
+    fn commit_conversion_all(&mut self, engine: &mut InputMethodEngine) -> EngineResult {
+        let result = self.commit_conversion(engine);
+        let result = merge(result, self.close(engine));
         self.enter(engine, PartMode::Plain);
         result
     }
@@ -743,6 +844,31 @@ fn z_sequence(engine: &InputMethodEngine, ch: char) -> bool {
 fn part_opener(key: &KeyEvent, ch: char) -> Option<Option<char>> {
     (ch.is_ascii_uppercase() || (key.modifiers.shift_key && ch.is_ascii_lowercase()))
         .then(|| Some(ch.to_ascii_lowercase()))
+}
+
+fn composing(engine: &InputMethodEngine) -> bool {
+    matches!(engine.state(), InputState::Composing { .. })
+}
+
+/// The reading held right of the caret, shown after the converted left
+/// side (the caret stays at the boundary).
+fn show_split(tail: &str, result: &mut EngineResult) {
+    for action in &mut result.actions {
+        if let EngineAction::UpdatePreedit(preedit) = action
+            && !preedit.is_empty()
+        {
+            let mut shown = Preedit::with_text(format!("{}{tail}", preedit.text()));
+            shown.set_caret(preedit.caret());
+            let end = shown.text().chars().count();
+            let mut attributes = preedit.attributes().to_vec();
+            attributes.push(PreeditAttribute::underline(
+                preedit.text().chars().count(),
+                end,
+            ));
+            shown.set_attributes(attributes);
+            *preedit = shown;
+        }
+    }
 }
 
 /// SKK's ▽ in front of abbrev input — alone before its first letter.
@@ -959,6 +1085,75 @@ mod tests {
         layer.process_key(&mut engine, &ctrl('n'));
         assert_eq!(feed(&mut layer, &mut engine, "j"), "かいぎ");
         assert!(matches!(engine.state(), InputState::Empty));
+    }
+
+    /// The preedit text and caret a key shows.
+    fn shown(
+        layer: &mut PartLayer,
+        engine: &mut InputMethodEngine,
+        key: &KeyEvent,
+    ) -> Option<(String, usize)> {
+        layer
+            .process_key(engine, key)
+            .actions
+            .into_iter()
+            .rev()
+            .find_map(|a| match a {
+                EngineAction::UpdatePreedit(p) => Some((p.text().to_string(), p.caret())),
+                _ => None,
+            })
+    }
+
+    #[test]
+    fn the_caret_sets_where_the_conversion_stops() {
+        let (mut layer, mut engine) = setup();
+        feed(&mut layer, &mut engine, "Kyouhaiitenki");
+        for _ in 0..4 {
+            layer.process_key(&mut engine, &ctrl('b'));
+        }
+        // Left of the caret composes; the rest is shown after it.
+        let back = shown(&mut layer, &mut engine, &ctrl('b'));
+        assert_eq!(back, Some(("きょうはいいてんき".into(), 4)));
+        assert_eq!(engine.reading(), "きょうは");
+        // Space commits the left side; the rest goes on as the part.
+        assert_eq!(feed(&mut layer, &mut engine, " "), "きょうは");
+        assert_eq!(layer.mode(), PartMode::Part);
+        assert_eq!(engine.reading(), "いいてんき");
+        assert_eq!(feed(&mut layer, &mut engine, " "), "いいてんき");
+        assert_eq!(layer.mode(), PartMode::Plain);
+    }
+
+    #[test]
+    fn split_parts_commit_whole_on_enter_and_move_back_right() {
+        let (mut layer, mut engine) = setup();
+        feed(&mut layer, &mut engine, "Kyouha");
+        layer.process_key(&mut engine, &press(Keysym::LEFT));
+        layer.process_key(&mut engine, &press(Keysym::LEFT));
+        assert_eq!(engine.reading(), "きょ");
+        // → and Ctrl+F move it back; at the end the whole part converts.
+        layer.process_key(&mut engine, &press(Keysym::RIGHT));
+        layer.process_key(&mut engine, &ctrl('f'));
+        assert_eq!(engine.reading(), "きょうは");
+        layer.process_key(&mut engine, &ctrl('a'));
+        assert_eq!(engine.reading(), "き");
+        // Enter commits both sides.
+        let result = layer.process_key(&mut engine, &press(Keysym::RETURN));
+        let committed: String = result
+            .actions
+            .iter()
+            .filter_map(|a| match a {
+                EngineAction::Commit(t) => Some(t.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(committed, "きょうは");
+        assert_eq!(layer.mode(), PartMode::Plain);
+        // A picked candidate goes on with the rest, like Space.
+        feed(&mut layer, &mut engine, "Kyouha");
+        layer.process_key(&mut engine, &ctrl('b'));
+        layer.process_key(&mut engine, &ctrl('n'));
+        assert_eq!(feed(&mut layer, &mut engine, "j"), "きょう");
+        assert_eq!(engine.reading(), "は");
     }
 
     #[test]
