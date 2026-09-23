@@ -233,7 +233,8 @@ impl InputMethodEngine {
         // rides on the candidate so selecting it commits and records under
         // the right key.
         let constraint = self.tail_constraint(pending);
-        if reading.chars().count() >= min_prefix_chars
+        if self.config.predictive
+            && reading.chars().count() >= min_prefix_chars
             && !matches!(constraint, TailConstraint::Dead)
         {
             let mut budget = predictive_limit;
@@ -446,7 +447,12 @@ impl InputMethodEngine {
 
         // Prefix match (predictive), narrowed to the kana the tail can
         // still become — mirrors the dictionary's expanded search
-        for (full_reading, surface, _score) in cache.prefix_lookup(reading) {
+        let predictions = if self.config.predictive {
+            cache.prefix_lookup(reading)
+        } else {
+            Vec::new()
+        };
+        for (full_reading, surface, _score) in predictions {
             if candidates.len() >= max {
                 break;
             }

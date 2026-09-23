@@ -196,6 +196,9 @@ pub struct ConversionSettings {
     pub n_threads: u32,
     /// Enable live conversion at startup (Ctrl+Shift+L still toggles at runtime)
     pub live_conversion: bool,
+    /// Offer predictive candidates: dictionary/learning readings that merely
+    /// start with the typed one (ひらがな → ひらがなタイムズ)
+    pub predictive: bool,
 }
 
 /// Learning cache settings
