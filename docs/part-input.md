@@ -15,7 +15,7 @@ Honjitu no Kaigi ha  →  本日の会議は
 
 ## キー
 
-以下は既定の割り当て。漢字パート入力のキーは `config.toml` の `[keys]`（設定ウィンドウの「キー」タブ）で変えられる。書き方は Emacs 式で、`C-n`（Ctrl+N）、`S-Tab`（Shift+Tab）、名前のあるキー（`Space` `Return` `Escape` `Tab` `BackSpace` `Delete` `Left` `Right` `Up` `Down` `Home` `End` `PageUp` `PageDown`）、または1文字（`q` `/`）。空白で区切って複数書ける。候補を選ぶキー（`select`）は8文字で、候補窓の2段の並びもこのキーのキーボード上の位置に従う。解釈できない割り当ては設定ウィンドウでは受け付けず、設定ファイルに書かれていたときは既定の割り当てを使う。
+以下は既定の割り当て。漢字パート入力のキーは、設定ウィンドウの「キー」タブで変えられる（＋ を押してから割り当てたいキーを押す。× で外す。候補を選ぶキーは「記録し直す」を押して8つ順に押す）。`config.toml` では `[keys]` に書く。書き方は Emacs 式で、`C-n`（Ctrl+N）、`S-Tab`（Shift+Tab）、名前のあるキー（`Space` `Return` `Escape` `Tab` `BackSpace` `Delete` `Left` `Right` `Up` `Down` `Home` `End` `PageUp` `PageDown`）、または1文字（`q` `/`）。空白で区切って複数書ける。候補を選ぶキー（`select`）は8文字で、候補窓の2段の並びもこのキーのキーボード上の位置に従う。解釈できない割り当ては設定ウィンドウでは受け付けず、設定ファイルに書かれていたときは既定の割り当てを使う。
 
 ### いつでも
 
