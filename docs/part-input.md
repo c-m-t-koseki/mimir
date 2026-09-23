@@ -15,7 +15,7 @@ Honjitu no Kaigi ha  →  本日の会議は
 
 ## キー
 
-以下は既定の割り当て。漢字パート入力のキーは `config.toml` の `[keys]`（設定ウィンドウの「キー」タブ）で変えられる。書き方は Emacs 式で、`C-n`（Ctrl+N）、`S-Tab`（Shift+Tab）、名前のあるキー（`Space` `Return` `Escape` `Tab` `BackSpace` `Delete` `Left` `Right` `Up` `Down` `Home` `End` `PageUp` `PageDown`）、または1文字（`q` `/`）。空白で区切って複数書ける。候補を選ぶキー（`select`）は8文字で、候補窓の2段の並びもこのキーのキーボード上の位置に従う。解釈できない割り当ては設定ウィンドウでは受け付けず、設定ファイルに書かれていたときは既定の割り当てを使う。
+以下は既定の割り当て。漢字パート入力のキーは、設定ウィンドウの「キー」タブで変えられる（＋ を押してから割り当てたいキーを押す。× で外す。候補を選ぶキーは「記録し直す」を押して8つ順に押す）。`config.toml` では `[keys]` に書く。書き方は Emacs 式で、`C-n`（Ctrl+N）、`S-Tab`（Shift+Tab）、名前のあるキー（`Space` `Return` `Escape` `Tab` `BackSpace` `Delete` `Left` `Right` `Up` `Down` `Home` `End` `PageUp` `PageDown`）、または1文字（`q` `/`）。空白で区切って複数書ける。候補を選ぶキー（`select`）は8文字で、候補窓の2段の並びもこのキーのキーボード上の位置に従う。解釈できない割り当ては設定ウィンドウでは受け付けず、設定ファイルに書かれていたときは既定の割り当てを使う。
 
 ### いつでも
 
@@ -147,7 +147,7 @@ scripts/skk2mozc.py --abbrev ~/Library/Application\ Support/AquaSKK/SKK-JISYO.L 
 | タブ | できること |
 |---|---|
 | キー | 漢字パート入力のキーの割り当て（`[keys]`） |
-| 一般 | SKK 式の入力（`[conversion] skk_style`）、変換中の読み（`[display] reading_display` `tail_delay_ms` `tail_delete_delay_ms`）、補完候補の表示（`[display] part_hint`）、予測候補（`[conversion] predictive`）、学習の有無（`[learning] enabled`）、日付・時刻の変換（`[date] enabled`） |
+| 一般 | 「操作」SKK 式の入力（`[conversion] skk_style`）。「表示」変換中の読み（`[display] reading_display` `tail_delay_ms` `tail_delete_delay_ms`）、候補窓を出すタイミング（`[display] candidate_window`）、候補窓の並び（`[display] candidate_layout`）、補完候補の表示（`[display] part_hint`）。「変換」予測候補（`[conversion] predictive`）、学習の有無（`[learning] enabled`）、日付・時刻の変換（`[date] enabled`） |
 | モデル | メイン / 軽量モデルの選択。組み合わせに名前を付けて保存・切替・削除（`[profiles.<名前>]`）。「計測する」で全モデルの精度・1回あたりの時間・読込時間をこの Mac で測る |
 | 辞書 | `user_dicts/` の TSV 辞書の一覧・検索・追加（`registered.tsv` へ）・削除。バイナリ辞書は名前だけ表示 |
 | 学習 | 学習履歴の一覧・検索・削除・すべてリセット |
