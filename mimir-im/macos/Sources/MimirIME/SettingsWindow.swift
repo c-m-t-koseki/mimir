@@ -9,6 +9,7 @@ import SwiftUI
 final class SettingsModel: ObservableObject {
     @Published var partHint = "completion"
     @Published var predictive = false
+    @Published var skkStyle = false
     @Published var model = ""
     @Published var lightModel = ""
     @Published var learning = true
@@ -31,6 +32,7 @@ final class SettingsModel: ObservableObject {
         }
         partHint = config["part_hint"] as? String ?? partHint
         predictive = config["predictive"] as? Bool ?? predictive
+        skkStyle = config["skk_style"] as? Bool ?? skkStyle
         model = config["model"] as? String ?? model
         lightModel = config["light_model"] as? String ?? lightModel
         learning = config["learning"] as? Bool ?? learning
@@ -40,6 +42,7 @@ final class SettingsModel: ObservableObject {
         profiles = rawProfiles.mapValues { ($0["model"] ?? "", $0["light_model"] ?? "") }
         saved = [
             "display.part_hint": partHint, "conversion.predictive": "\(predictive)",
+            "conversion.skk_style": "\(skkStyle)",
             "conversion.model": model, "conversion.light_model": lightModel,
             "learning.enabled": "\(learning)", "date.enabled": "\(date)",
         ]
@@ -272,6 +275,8 @@ struct GeneralTab: View {
 
     var body: some View {
         Form {
+            Toggle("SKK 式の入力（大文字で漢字の変換を始め、小文字は平仮名で確定）", isOn: $model.skkStyle)
+                .onChange(of: model.skkStyle) { model.set("conversion", "skk_style", $0) }
             Picker("変換中の補助表示", selection: $model.partHint) {
                 Text("補完候補").tag("completion")
                 Text("読み").tag("reading")
