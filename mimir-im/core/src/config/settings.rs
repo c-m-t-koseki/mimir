@@ -720,6 +720,14 @@ my-model = "/home/user/models/my.gguf"
     }
 
     #[test]
+    fn test_date_off_keeps_the_phrase_list() {
+        let settings = parse_with_defaults("[date]\nenabled = false\n").unwrap();
+        assert!(!settings.date.enabled);
+        assert!(!settings.date.phrases.is_empty());
+        assert!(parse_with_defaults("").unwrap().date.enabled);
+    }
+
+    #[test]
     fn test_user_model_entry_replaces_default_whole() {
         // A user entry under a default key replaces it whole: a partial
         // table must not inherit the default's filename.
