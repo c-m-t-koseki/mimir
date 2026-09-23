@@ -140,6 +140,9 @@ pub struct KeyResult {
     pub conversion_ms: u64,
     /// End-to-end engine processing time for this request in milliseconds.
     pub process_key_ms: u64,
+    /// Input mode after this request: "kana" or "ascii" (the frontend shows
+    /// a badge when it changes).
+    pub mode: &'static str,
 }
 
 #[derive(Debug, Serialize)]

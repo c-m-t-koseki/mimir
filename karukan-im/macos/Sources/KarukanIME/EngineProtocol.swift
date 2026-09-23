@@ -9,6 +9,8 @@ struct KeyResult: Decodable {
     let actions: [EngineAction]
     let conversionMs: UInt64?
     let processKeyMs: UInt64?
+    /// "kana" or "ascii"; absent from older engines.
+    let mode: String?
 }
 
 struct PreeditAttr: Decodable {
