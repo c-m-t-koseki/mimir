@@ -322,6 +322,12 @@ impl PartLayer {
 
     fn plain_key(&mut self, engine: &mut InputMethodEngine, key: &KeyEvent) -> EngineResult {
         if let Some(ch) = typed_char(key) {
+            if z_sequence(engine, ch) {
+                let result = without_suggestions(engine.feed_romaji(ch));
+                let result = merge(result, engine.commit_plain_result());
+                self.note_plain_commits(&result);
+                return result;
+            }
             if let Some(first) = part_opener(key, ch) {
                 return self.start_part(engine, first);
             }
@@ -375,6 +381,9 @@ impl PartLayer {
                 _ => self.after_edit(engine, key),
             };
         };
+        if z_sequence(engine, ch) {
+            return engine.feed_romaji(ch);
+        }
         if ch == ' ' {
             let result = self.close(engine);
             self.enter(engine, PartMode::Plain);
@@ -604,6 +613,12 @@ fn typed_char(key: &KeyEvent) -> Option<char> {
     key.to_char()
 }
 
+/// A key the layer would take as a command (`l`, Space, `,`, `.`) that
+/// instead completes a pending `z` sequence: zl → →, z + Space → 　, ….
+fn z_sequence(engine: &InputMethodEngine, ch: char) -> bool {
+    matches!(ch, 'l' | ' ' | ',' | '.') && engine.pending_romaji() == "z"
+}
+
 /// `Some(first)` when the key opens a kanji part: a capital, fed lowercased.
 fn part_opener(key: &KeyEvent, ch: char) -> Option<Option<char>> {
     (ch.is_ascii_uppercase() || (key.modifiers.shift_key && ch.is_ascii_lowercase()))
@@ -698,6 +713,18 @@ mod tests {
         assert_eq!(feed(&mut layer, &mut engine, " "), "かいぎ");
         assert_eq!(layer.mode(), PartMode::Plain);
         assert_eq!(feed(&mut layer, &mut engine, "ha"), "は");
+    }
+
+    #[test]
+    fn z_sequences_beat_mode_keys() {
+        let (mut layer, mut engine) = setup();
+        assert_eq!(feed(&mut layer, &mut engine, "zl"), "→");
+        assert_eq!(feed(&mut layer, &mut engine, "z "), "\u{3000}");
+        assert_eq!(feed(&mut layer, &mut engine, "z."), "…");
+        assert_eq!(layer.mode(), PartMode::Plain);
+        assert_eq!(feed(&mut layer, &mut engine, "Kazl"), "");
+        assert_eq!(layer.mode(), PartMode::Part);
+        assert_eq!(feed(&mut layer, &mut engine, " "), "か→");
     }
 
     #[test]
