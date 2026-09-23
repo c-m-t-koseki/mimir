@@ -9,10 +9,17 @@
 //! Inside a part, candidate keys are Emacs-style so nothing collides with
 //! SandS: Ctrl+N opens the candidate window / next candidate, Ctrl+P the
 //! previous one, `a s d f j k l` pick one, Ctrl+G cancels.
+//!
+//! Ctrl+R inside a part registers a word: the part's reading is kept, the
+//! word is typed with the same keys (its commits are captured instead of
+//! reaching the application), and Enter saves it — to the learning cache
+//! for immediate effect and to `user_dicts/registered.tsv` for good.
 
 use super::engine::{EngineAction, EngineResult, InputMethodEngine};
 use super::keycode::{KeyEvent, KeyModifiers, Keysym};
+use super::preedit::Preedit;
 use super::state::InputState;
+use crate::config::Settings;
 
 /// Keys that pick a candidate from the open window, in page order.
 pub const SELECT_KEYS: &str = "asdfjkl";
@@ -29,6 +36,13 @@ pub enum PartMode {
 
 pub struct PartLayer {
     mode: PartMode,
+    /// Word registration in progress: the reading and the word so far.
+    register: Option<Registration>,
+}
+
+struct Registration {
+    reading: String,
+    word: String,
 }
 
 impl Default for PartLayer {
@@ -55,6 +69,7 @@ impl PartLayer {
     pub fn new() -> Self {
         Self {
             mode: PartMode::Plain,
+            register: None,
         }
     }
 
@@ -73,6 +88,13 @@ impl PartLayer {
     }
 
     pub fn process_key(&mut self, engine: &mut InputMethodEngine, key: &KeyEvent) -> EngineResult {
+        if self.register.is_some() && key.is_press && !key.keysym.is_modifier() {
+            return self.registration_key(engine, key);
+        }
+        self.dispatch(engine, key)
+    }
+
+    fn dispatch(&mut self, engine: &mut InputMethodEngine, key: &KeyEvent) -> EngineResult {
         let m = key.modifiers;
         if !key.is_press || key.keysym.is_modifier() || m.alt_key || m.super_key {
             return match self.mode {
@@ -174,6 +196,7 @@ impl PartLayer {
                     }
                 }
                 Keysym::KEY_G | Keysym::KEY_G_UPPER => self.cancel_part(engine),
+                Keysym::KEY_R | Keysym::KEY_R_UPPER => self.start_registration(engine),
                 _ => engine.process_key(key),
             };
         }
@@ -236,6 +259,7 @@ impl PartLayer {
                 )),
                 // Ctrl+G: close the window, back to the part's composition.
                 Keysym::KEY_G | Keysym::KEY_G_UPPER => engine.process_key(&press(Keysym::ESCAPE)),
+                Keysym::KEY_R | Keysym::KEY_R_UPPER => self.start_registration(engine),
                 _ => engine.process_key(key),
             };
         }
@@ -263,10 +287,121 @@ impl PartLayer {
         merge(result, self.process_key(engine, key))
     }
 
+    fn start_registration(&mut self, engine: &mut InputMethodEngine) -> EngineResult {
+        let reading = engine.take_reading();
+        self.enter(engine, PartMode::Plain);
+        if reading.is_empty() {
+            return EngineResult::consumed();
+        }
+        self.register = Some(Registration {
+            reading,
+            word: String::new(),
+        });
+        self.registration_result(engine, EngineResult::consumed())
+    }
+
+    /// Keys while registering. With nothing composing, Enter saves, Ctrl+G /
+    /// Escape abort and Backspace edits the word; everything else types the
+    /// word through the ordinary layer, its commits captured.
+    fn registration_key(&mut self, engine: &mut InputMethodEngine, key: &KeyEvent) -> EngineResult {
+        let idle = matches!(engine.state(), InputState::Empty);
+        let ctrl = key.modifiers.control_key;
+        let reg = self.register.as_mut().expect("registering");
+        if idle && self.mode != PartMode::Part {
+            let abort = key.keysym == Keysym::ESCAPE
+                || (ctrl && matches!(key.keysym, Keysym::KEY_G | Keysym::KEY_G_UPPER));
+            if abort {
+                self.register = None;
+                return EngineResult::consumed()
+                    .with_action(EngineAction::UpdatePreedit(Preedit::new()));
+            }
+            if key.keysym == Keysym::RETURN {
+                let reg = self.register.take().expect("registering");
+                if reg.word.is_empty() {
+                    return EngineResult::consumed()
+                        .with_action(EngineAction::UpdatePreedit(Preedit::new()));
+                }
+                engine.learn(&reg.reading, &reg.word);
+                save_registered(&reg.reading, &reg.word);
+                return EngineResult::consumed().with_action(EngineAction::Commit(reg.word));
+            }
+            if key.keysym == Keysym::BACKSPACE {
+                reg.word.pop();
+                return self.registration_result(engine, EngineResult::consumed());
+            }
+        }
+        if self.mode == PartMode::Ascii
+            && let Some(ch) = typed_char(key)
+        {
+            reg.word.push(ch);
+            return self.registration_result(engine, EngineResult::consumed());
+        }
+        let result = self.dispatch(engine, key);
+        let mut result = self.registration_result(engine, result);
+        result.consumed = true;
+        result
+    }
+
+    /// Fold the layer's output into the registration: commits go to the
+    /// word, and the preedit shows 【reading】word + what is composing.
+    fn registration_result(
+        &mut self,
+        engine: &InputMethodEngine,
+        result: EngineResult,
+    ) -> EngineResult {
+        let reg = self.register.as_mut().expect("registering");
+        let mut out = EngineResult {
+            consumed: result.consumed,
+            actions: Vec::new(),
+        };
+        for action in result.actions {
+            match action {
+                EngineAction::Commit(text) => reg.word.push_str(&text),
+                EngineAction::UpdatePreedit(_) => {}
+                other => out.actions.push(other),
+            }
+        }
+        let composing = engine
+            .preedit()
+            .map(|p| p.text().to_string())
+            .unwrap_or_default();
+        let text = format!("【{}】{}{}", reg.reading, reg.word, composing);
+        let caret = text.chars().count();
+        let mut preedit = Preedit::with_text_underlined(text);
+        preedit.set_caret(caret);
+        out.actions.push(EngineAction::UpdatePreedit(preedit));
+        out
+    }
+
     fn commit_conversion(&mut self, engine: &mut InputMethodEngine) -> EngineResult {
         let result = engine.process_key(&press(Keysym::RETURN));
         self.enter(engine, PartMode::Plain);
         result
+    }
+}
+
+/// Append a registered word to `user_dicts/registered.tsv` (Mozc TSV), read
+/// at the next start. Failure only loses persistence: the learning cache
+/// already has the word.
+fn save_registered(reading: &str, word: &str) {
+    use std::io::Write;
+    // Tests must never write into the real data directory.
+    if cfg!(test) {
+        return;
+    }
+    let Some(dir) = Settings::user_dict_dir() else {
+        return;
+    };
+    let line = format!("{reading}\t{word}\t名詞\tkarukan登録\n");
+    let written = std::fs::create_dir_all(&dir).and_then(|_| {
+        std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(dir.join("registered.tsv"))?
+            .write_all(line.as_bytes())
+    });
+    if let Err(e) = written {
+        tracing::warn!("failed to save registered word: {e}");
     }
 }
 
@@ -373,6 +508,38 @@ mod tests {
         assert!(layer.process_key(&mut engine, &ctrl_j).consumed);
         assert_eq!(layer.mode(), PartMode::Plain);
         assert_eq!(feed(&mut layer, &mut engine, "a"), "あ");
+    }
+
+    #[test]
+    fn ctrl_r_registers_a_word() {
+        let (mut layer, mut engine) = setup();
+        feed(&mut layer, &mut engine, "Karukan");
+        let ctrl_r = KeyEvent::new(
+            Keysym::KEY_R,
+            KeyModifiers {
+                control_key: true,
+                ..Default::default()
+            },
+            true,
+        );
+        layer.process_key(&mut engine, &ctrl_r);
+        // The word is typed with the usual keys; nothing reaches the app.
+        assert_eq!(feed(&mut layer, &mut engine, "lkarukan"), "");
+        let ctrl_j = KeyEvent::new(
+            Keysym::KEY_J,
+            KeyModifiers {
+                control_key: true,
+                ..Default::default()
+            },
+            true,
+        );
+        layer.process_key(&mut engine, &ctrl_j);
+        assert_eq!(feed(&mut layer, &mut engine, "Ime "), "");
+        let enter = layer.process_key(&mut engine, &press(Keysym::RETURN));
+        assert!(matches!(
+            enter.actions.as_slice(),
+            [EngineAction::Commit(word)] if word == "karukanいめ"
+        ));
     }
 
     #[test]

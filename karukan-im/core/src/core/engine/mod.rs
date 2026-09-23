@@ -293,6 +293,20 @@ impl InputMethodEngine {
             .with_action(EngineAction::HideAuxText)
     }
 
+    /// End the composition without committing, returning its kana reading
+    /// (the word-registration flow takes the reading, then asks for the word).
+    pub fn take_reading(&mut self) -> String {
+        self.settle_romaji();
+        let reading = self.input_buf.reading();
+        self.end_composition();
+        reading
+    }
+
+    /// Teach `reading → surface` as if the user had converted it here.
+    pub fn learn(&mut self, reading: &str, surface: &str) {
+        self.record_learning(reading, surface);
+    }
+
     /// Drop all composition-scoped state in one place: the input buffer, the
     /// live-conversion display flag, the chunks, and the manual chunk breaks.
     /// Every path that ends (or freshly starts) a composition goes through
