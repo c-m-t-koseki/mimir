@@ -3,3 +3,5 @@
 "dev.togatoga.inputmethod.Karukan" = "Karukan";
 "dev.togatoga.inputmethod.Karukan.Japanese" = "ひらがな（Karukan）";
 "dev.togatoga.inputmethod.Karukan.Roman" = "英数（Karukan）";
+"CFBundleName" = "Karukan";
+"CFBundleDisplayName" = "Karukan";

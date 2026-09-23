@@ -797,6 +797,35 @@ impl InputMethodEngine {
             .with_action(EngineAction::HideAuxText)
     }
 
+    /// The learning history as `(reading, surface, frequency, last_access)`.
+    pub fn learning_entries(&self) -> Vec<(String, String, u32, u64)> {
+        self.learning.as_ref().map_or_else(Vec::new, |cache| {
+            cache
+                .entries()
+                .into_iter()
+                .map(|(r, e)| (r.to_string(), e.surface.clone(), e.frequency, e.last_access))
+                .collect()
+        })
+    }
+
+    /// Forget one learned conversion, saving right away.
+    pub fn learning_remove(&mut self, reading: &str, surface: &str) -> bool {
+        let removed = self
+            .learning
+            .as_mut()
+            .is_some_and(|cache| cache.remove(reading, surface));
+        self.save_learning();
+        removed
+    }
+
+    /// Forget every learned conversion, saving right away.
+    pub fn learning_clear(&mut self) {
+        if let Some(cache) = &mut self.learning {
+            cache.clear();
+        }
+        self.save_learning();
+    }
+
     /// Save the learning cache to disk if it has unsaved changes.
     pub fn save_learning(&mut self) {
         if let Some(cache) = &mut self.learning
