@@ -16,6 +16,7 @@
 //! | `set_surrounding_text` | [`SurroundingTextParams`]                | `{}`              |
 //! | `save_learning`        | `{}`                                     | `{}`              |
 //! | `status`               | `{}`                                     | [`StatusResult`]  |
+//! | `refresh`              | `{}`                                     | [`KeyResult`]     |
 //!
 //! Keysyms are XKB keysym values (the same representation used by the
 //! fcitx5 FFI); the frontend is responsible for translating native key
@@ -151,8 +152,24 @@ pub struct KeyResult {
     /// Whether the select keys (a–l) pick from the candidate window; the
     /// frontend labels its rows with them only then.
     pub select_keys: bool,
-    /// `[display] candidate_layout`: "vertical" or "horizontal".
+    /// `[display] candidate_layout`: "vertical" or "keyboard".
     pub candidate_layout: CandidateLayout,
+    /// `[display] reading_display = "ruby"`: the reading to set above the
+    /// preedit's last kanji run.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ruby: Option<Ruby>,
+    /// Call `refresh` after this many milliseconds without a key (the
+    /// preedit holds its typed tail back in kana until then).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub refresh_ms: Option<u64>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct Ruby {
+    /// Span in the preedit, in Unicode scalar values.
+    pub start: usize,
+    pub end: usize,
+    pub text: String,
 }
 
 /// `set_config`: write `[section] key = value` into config.toml. Takes

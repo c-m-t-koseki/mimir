@@ -87,11 +87,23 @@ verbose = false
 candidate_window = "always"
 # 漢字パート入力中、変換結果の下の小さな枠に出すもの（macOS）。
 # "completion" は打った読みで始まる過去の確定語（Tab で補完できる）、
-# "reading" はライブ変換の読み（平仮名）、"none" は何も出さない。
+# "none" は何も出さない。
 part_hint = "completion"
 # 候補窓の並び（macOS）: "vertical"（縦に一列）/ "keyboard"（選択キーの位置どおりに
 # 2段: 上段 e r u i、下段 d f j k）
 candidate_layout = "vertical"
+# ライブ変換中の読みの見せ方（macOS）。
+# "tail"   打った末尾の tail_chars 文字を平仮名のまま残し、tail_delay_ms ミリ秒
+#          手を止めると変換する（子音だけを打った間は変換を戻さない）
+# "ruby"   最後の漢字のかたまりの真上に、その読みを小さく出す
+# "inline" 最後の漢字のかたまりの読みを後ろに添える（今日はいい天気〈てんき〉）
+# "none"   出さない
+reading_display = "tail"
+tail_chars = 1
+tail_delay_ms = 250
+# 削除（Backspace）のあとに手を止めてから変換するまで。漢字の読みを削った
+# ときだけ平仮名で見せ、漢字にかからない削除（規定で → 規定）は漢字のまま
+tail_delete_delay_ms = 600
 
 # どのキーがどの記号を入力するか。幅（半角・全角）は [width] が決める。
 [symbol]

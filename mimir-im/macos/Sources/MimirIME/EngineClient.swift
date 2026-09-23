@@ -58,6 +58,11 @@ class EngineClient {
         keyResultSync(method: "commit", params: [:], timeout: 1.0)
     }
 
+    /// Typing paused: the preedit without its kana tail held back.
+    func refreshSync() -> KeyResult? {
+        keyResultSync(method: "refresh", params: [:], timeout: 1.0)
+    }
+
     func saveLearningAsync() {
         sendRequest(method: "save_learning", params: [:]) { _ in }
     }
