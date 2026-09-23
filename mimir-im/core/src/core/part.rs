@@ -8,8 +8,8 @@
 //! and Ctrl+J returns to kana, as in SKK.
 //!
 //! `q` inside a part commits its reading in katakana, as in SKK. `/` opens
-//! SKK's abbrev input: letters go in as typed, Space converts them
-//! (github → GitHub), Enter commits them as they are.
+//! SKK's abbrev input, marked ▽ as there: letters go in as typed, Space
+//! converts them (github → GitHub), Enter commits them as they are.
 //!
 //! Inside a part, candidate keys are Emacs-style so nothing collides with
 //! SandS: Ctrl+N opens the candidate window / next candidate, Ctrl+P the
@@ -22,7 +22,7 @@
 
 use super::engine::{EngineAction, EngineResult, InputMethodEngine};
 use super::keycode::{KeyEvent, KeyModifiers, Keysym};
-use super::preedit::Preedit;
+use super::preedit::{Preedit, PreeditAttribute};
 use super::state::InputState;
 use crate::config::Settings;
 use crate::config::settings::PartHint;
@@ -148,6 +148,9 @@ impl PartLayer {
         }
         let result = self.dispatch(engine, key);
         let mut result = plain_aux(engine, result);
+        if self.abbrev {
+            mark_abbrev(engine, &mut result);
+        }
         // A Ctrl chord the engine leaves unbound must not reach the
         // application mid-composition: its text edit (Ctrl+K, Ctrl+W, …)
         // would act on the marked text behind the engine's back, and the
@@ -713,6 +716,39 @@ fn part_opener(key: &KeyEvent, ch: char) -> Option<Option<char>> {
         .then(|| Some(ch.to_ascii_lowercase()))
 }
 
+/// SKK's ▽ in front of abbrev input — alone before its first letter.
+const ABBREV_MARK: &str = "▽";
+
+fn mark_abbrev(engine: &InputMethodEngine, result: &mut EngineResult) {
+    let mut marked = false;
+    for action in &mut result.actions {
+        if let EngineAction::UpdatePreedit(preedit) = action {
+            *preedit = prefixed(preedit, ABBREV_MARK);
+            marked = true;
+        }
+    }
+    if !marked && matches!(engine.state(), InputState::Empty) {
+        result
+            .actions
+            .push(EngineAction::UpdatePreedit(Preedit::with_text(ABBREV_MARK)));
+    }
+}
+
+/// `preedit` with `prefix` in front, caret and attributes moved along.
+fn prefixed(preedit: &Preedit, prefix: &str) -> Preedit {
+    let shift = prefix.chars().count();
+    let mut out = Preedit::with_text(format!("{prefix}{}", preedit.text()));
+    out.set_caret(preedit.caret() + shift);
+    out.set_attributes(
+        preedit
+            .attributes()
+            .iter()
+            .map(|a| PreeditAttribute::new(a.start + shift, a.end + shift, a.attr_type))
+            .collect(),
+    );
+    out
+}
+
 /// The engine's aux line carries mode and source markers (`[あ][変換:🤖]`,
 /// chunk counters); the candidate window shows just the reading instead.
 fn plain_aux(engine: &InputMethodEngine, mut result: EngineResult) -> EngineResult {
@@ -851,6 +887,20 @@ mod tests {
                 .iter()
                 .any(|a| matches!(a, EngineAction::Commit(text) if text == "Html5q"))
         );
+        // The ▽ mark leads the preedit.
+        let result = layer.process_key(&mut engine, &press_char('/'));
+        assert!(
+            result
+                .actions
+                .iter()
+                .any(|a| matches!(a, EngineAction::UpdatePreedit(p) if p.text() == "▽"))
+        );
+        let result = layer.process_key(&mut engine, &press_char('x'));
+        assert!(result.actions.iter().any(
+            |a| matches!(a, EngineAction::UpdatePreedit(p) if p.text() == "▽x" && p.caret() == 2)
+        ));
+        layer.process_key(&mut engine, &ctrl('g'));
+        layer.process_key(&mut engine, &ctrl('g'));
         // Back to kana afterwards.
         assert_eq!(feed(&mut layer, &mut engine, "ka"), "か");
         // Space converts.
