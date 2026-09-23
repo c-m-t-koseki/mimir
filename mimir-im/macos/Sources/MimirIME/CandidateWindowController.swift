@@ -416,12 +416,15 @@ class RubyPanelController {
 
     /// Centered over `start..<end` (the run's edges in screen coordinates),
     /// or flush with `start` when the client can't tell where `end` is.
-    func show(_ text: String, start: NSRect, endX: CGFloat) {
+    @discardableResult
+    func show(_ text: String, start: NSRect, endX: CGFloat) -> NSRect {
         view.text = text
         let size = view.fittingContentSize()
         let x = endX > start.minX ? (start.minX + endX - size.width) / 2 : start.minX
-        panel.setFrame(NSRect(origin: NSPoint(x: x, y: start.maxY + 1), size: size), display: true)
+        let frame = NSRect(origin: NSPoint(x: x, y: start.maxY + 1), size: size)
+        panel.setFrame(frame, display: true)
         panel.orderFront(nil)
+        return frame
     }
 
     func hide() {

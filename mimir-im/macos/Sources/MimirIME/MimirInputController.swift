@@ -128,21 +128,44 @@ class MimirInputController: IMKInputController {
             Self.rubyPanel.hide()
             return
         }
-        var start = NSRect.zero
-        client.attributes(
-            forCharacterIndex: utf16Offset(ofScalarOffset: ruby.start, in: markedText),
-            lineHeightRectangle: &start)
-        var end = NSRect.zero
-        client.attributes(
-            forCharacterIndex: utf16Offset(ofScalarOffset: ruby.end, in: markedText),
-            lineHeightRectangle: &end)
-        guard start != .zero else {
+        let from = utf16Offset(ofScalarOffset: ruby.start, in: markedText)
+        let to = utf16Offset(ofScalarOffset: ruby.end, in: markedText)
+        // The run's own rect, where the client answers firstRect for it
+        // (Cocoa text views). Chromium/Electron answer nothing there, but do
+        // give each character's position below.
+        let marked = client.markedRange()
+        if marked.location != NSNotFound {
+            var actual = NSRange()
+            let rect = client.firstRect(
+                forCharacterRange: NSRange(location: marked.location + from, length: to - from),
+                actualRange: &actual)
+            if rect.width > 0, rect.height > 0 {
+                Self.rubyPanel.show(ruby.text, start: rect, endX: rect.maxX)
+                return
+            }
+        }
+        // Each end's position. A run ending the preedit has no character
+        // after it to ask about: its last character's position plus one
+        // character's width (the run's pitch, or about the line's height
+        // for a single character).
+        func position(_ index: Int) -> NSRect {
+            var rect = NSRect.zero
+            client.attributes(forCharacterIndex: index, lineHeightRectangle: &rect)
+            return rect
+        }
+        let head = position(from)
+        guard head != .zero else {
             Self.rubyPanel.hide()
             return
         }
-        // A run ending the preedit has no char after it to ask about.
-        let endX = abs(end.minY - start.minY) < 1 && end.minX > start.minX ? end.minX : 0
-        Self.rubyPanel.show(ruby.text, start: start, endX: endX)
+        var endX = position(to).minX
+        if endX <= head.minX {
+            let last = position(to - 1)
+            let count = CGFloat(to - from)
+            let pitch = count > 1 && last.minX > head.minX ? (last.minX - head.minX) / (count - 1) : head.height / 1.25
+            endX = (count > 1 ? last.minX : head.minX) + pitch
+        }
+        Self.rubyPanel.show(ruby.text, start: head, endX: endX)
     }
 
     /// After a pause in typing, ask for the preedit with nothing held back.
