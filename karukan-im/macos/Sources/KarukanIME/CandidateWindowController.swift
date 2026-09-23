@@ -1,21 +1,160 @@
 import Cocoa
 
+/// Swiss-style palette and type scale shared by the IME's panels:
+/// monochrome, one red accent, flush-left on an 8pt grid, hierarchy by
+/// size and weight only, square corners.
+enum Swiss {
+    static let accent = NSColor(srgbRed: 0.890, green: 0.024, blue: 0.075, alpha: 1)
+    static let hairline = NSColor.labelColor.withAlphaComponent(0.15)
+    /// 8pt baseline grid.
+    static let grid: CGFloat = 8
+    static let candidateFont = NSFont.systemFont(ofSize: 17)
+    static let selectedFont = NSFont.systemFont(ofSize: 17, weight: .semibold)
+    static let keyFont = NSFont(name: "HelveticaNeue-Medium", size: 11)
+        ?? NSFont.systemFont(ofSize: 11, weight: .medium)
+    static let headFont = NSFont.systemFont(ofSize: 11, weight: .semibold)
+    static let smallFont = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular)
+
+    /// A flat square box with a hairline edge, colors resolved per
+    /// appearance by AppKit.
+    static func box(fill: NSColor = .textBackgroundColor) -> NSBox {
+        let box = NSBox()
+        box.boxType = .custom
+        box.borderColor = hairline
+        box.borderWidth = 1
+        box.cornerRadius = 0
+        box.fillColor = fill
+        box.titlePosition = .noTitle
+        box.contentViewMargins = .zero
+        return box
+    }
+
+    static func panel() -> NSPanel {
+        let panel = NSPanel(
+            contentRect: NSRect(x: 0, y: 0, width: 200, height: 100),
+            styleMask: [.nonactivatingPanel, .borderless],
+            backing: .buffered,
+            defer: true
+        )
+        panel.level = .popUpMenu
+        panel.hidesOnDeactivate = false
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = false
+        panel.ignoresMouseEvents = true
+        return panel
+    }
+}
+
+/// The candidate list, drawn directly so every element sits on the grid:
+///
+///     かいぎ                     1 / 3     header: reading, page (right)
+///     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━     2pt rule
+///     [a] 会議
+///     [s] 懐疑                     [旧]    selected: key in a red square
+///
+/// Keys are the ones that pick the row (`a s d f j k l`, see `part.rs`);
+/// descriptions share one flush-right column.
+final class CandidateListView: NSView {
+    struct Row {
+        let key: String
+        let text: String
+        let note: String?
+        let selected: Bool
+    }
+
+    var header: String?
+    var page: String?
+    var rows: [Row] = []
+
+    private let pad = Swiss.grid * 2
+    private let rowHeight = Swiss.grid * 4
+    private let keySide = Swiss.grid * 2
+    private var textX: CGFloat { pad + keySide + Swiss.grid * 1.5 }
+    private var hasHeader: Bool { header != nil || page != nil }
+    private var headerHeight: CGFloat { hasHeader ? Swiss.grid * 3 + 2 : 0 }
+
+    override var isFlipped: Bool { true }
+
+    private func size(_ text: String, _ font: NSFont) -> NSSize {
+        (text as NSString).size(withAttributes: [.font: font])
+    }
+
+    func fittingContentSize() -> NSSize {
+        let textW = rows.map { size($0.text, Swiss.selectedFont).width }.max() ?? 0
+        let noteW = rows.compactMap { $0.note.map { size($0, Swiss.smallFont).width } }.max()
+        var width = textX + textW + pad
+        if let noteW { width += Swiss.grid * 3 + noteW }
+        let headW =
+            pad * 2 + size(header ?? "", Swiss.headFont).width
+            + size(page ?? "", Swiss.smallFont).width + Swiss.grid * 3
+        width = max(width, headW, Swiss.grid * 24)
+        let height = Swiss.grid + headerHeight + CGFloat(rows.count) * rowHeight + Swiss.grid
+        return NSSize(width: ceil(width), height: height)
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        var y = Swiss.grid
+        if hasHeader {
+            let head = header ?? ""
+            (head as NSString).draw(
+                at: NSPoint(x: pad, y: y),
+                withAttributes: [.font: Swiss.headFont, .foregroundColor: NSColor.labelColor])
+            if let page {
+                let w = size(page, Swiss.smallFont).width
+                (page as NSString).draw(
+                    at: NSPoint(x: bounds.width - pad - w, y: y + 1),
+                    withAttributes: [
+                        .font: Swiss.smallFont, .foregroundColor: NSColor.secondaryLabelColor,
+                    ])
+            }
+            y += Swiss.grid * 3
+            NSColor.labelColor.setFill()
+            NSRect(x: pad, y: y - 4, width: bounds.width - pad * 2, height: 2).fill()
+            y += 2
+        }
+        for row in rows {
+            let mid = y + rowHeight / 2
+            let square = NSRect(x: pad, y: mid - keySide / 2, width: keySide, height: keySide)
+            if row.selected {
+                Swiss.accent.setFill()
+                square.fill()
+            }
+            let keySize = size(row.key, Swiss.keyFont)
+            (row.key as NSString).draw(
+                at: NSPoint(x: square.midX - keySize.width / 2, y: square.midY - keySize.height / 2),
+                withAttributes: [
+                    .font: Swiss.keyFont,
+                    .foregroundColor: row.selected ? NSColor.white : NSColor.tertiaryLabelColor,
+                ])
+            let font = row.selected ? Swiss.selectedFont : Swiss.candidateFont
+            let textH = size(row.text, font).height
+            (row.text as NSString).draw(
+                at: NSPoint(x: textX, y: mid - textH / 2),
+                withAttributes: [.font: font, .foregroundColor: NSColor.labelColor])
+            if let note = row.note {
+                let noteSize = size(note, Swiss.smallFont)
+                (note as NSString).draw(
+                    at: NSPoint(x: bounds.width - pad - noteSize.width, y: mid - noteSize.height / 2),
+                    withAttributes: [
+                        .font: Swiss.smallFont, .foregroundColor: NSColor.secondaryLabelColor,
+                    ])
+            }
+            y += rowHeight
+        }
+    }
+}
+
 /// Custom candidate window (borderless non-activating NSPanel).
 ///
 /// The engine pre-paginates: `show` receives only the visible page plus
-/// page metadata, so this controller just renders rows. An optional aux
-/// line (reading hint / model info from the engine) is shown as a footer.
+/// page metadata, so this controller only maps it onto `CandidateListView`.
+/// The aux text (the reading, see `part.rs`) heads the list.
 class CandidateWindowController {
-    // Visual scale of the panel. Candidate rows use a larger type size
-    // than the footers (page indicator / aux line), matching the system
-    // Japanese IME's proportions.
-    private static let candidateFontSize: CGFloat = 18
-    private static let footerFontSize: CGFloat = 13
-    private static let minPanelWidth: CGFloat = 160
+    static let selectKeys = Array("asdfjkl")
 
     private let panel: NSPanel
-    private let stackView: NSStackView
-    private var rowViews: [NSView] = []
+    private let listView = CandidateListView()
     private var auxText: String?
 
     private struct PageState {
@@ -27,34 +166,18 @@ class CandidateWindowController {
     private var pageState: PageState?
 
     init() {
-        panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 200, height: 100),
-            styleMask: [.nonactivatingPanel, .borderless],
-            backing: .buffered,
-            defer: true
-        )
-        panel.level = .popUpMenu
-        panel.hidesOnDeactivate = false
-        panel.isOpaque = false
-        panel.backgroundColor = NSColor.windowBackgroundColor
-        panel.ignoresMouseEvents = true
-
-        stackView = NSStackView()
-        stackView.orientation = .vertical
-        stackView.alignment = .leading
-        stackView.spacing = 4
-        stackView.edgeInsets = NSEdgeInsets(top: 8, left: 12, bottom: 8, right: 12)
-        stackView.translatesAutoresizingMaskIntoConstraints = false
-
-        panel.contentView?.addSubview(stackView)
-        if let contentView = panel.contentView {
-            NSLayoutConstraint.activate([
-                stackView.topAnchor.constraint(equalTo: contentView.topAnchor),
-                stackView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
-                stackView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
-                stackView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
-            ])
-        }
+        panel = Swiss.panel()
+        let box = Swiss.box()
+        panel.contentView = box
+        listView.translatesAutoresizingMaskIntoConstraints = false
+        let content = box.contentView!
+        content.addSubview(listView)
+        NSLayoutConstraint.activate([
+            listView.topAnchor.constraint(equalTo: content.topAnchor),
+            listView.leadingAnchor.constraint(equalTo: content.leadingAnchor),
+            listView.trailingAnchor.constraint(equalTo: content.trailingAnchor),
+            listView.bottomAnchor.constraint(equalTo: content.bottomAnchor),
+        ])
     }
 
     var isVisible: Bool { panel.isVisible }
@@ -71,7 +194,7 @@ class CandidateWindowController {
         render(cursorRect: cursorRect)
     }
 
-    /// Update the aux footer; re-renders in place if the window is visible.
+    /// Update the aux header; re-renders in place if the window is visible.
     /// Pass `deferRender: true` when a `show`/`hide` follows in the same
     /// action batch, so the panel is rendered once per batch instead of
     /// once for the aux change and again for the candidates.
@@ -88,99 +211,39 @@ class CandidateWindowController {
     }
 
     private func render(cursorRect: NSRect?) {
-        clearRows()
         guard let state = pageState else {
             hide()
             return
         }
-        // An empty list still renders while the aux footer has text: a
-        // source-filtered view narrowed to an empty source must show its
-        // 「候補なし」 footer, not a silently vanishing panel.
+        // An empty list still renders while the aux has text: a
+        // source-filtered view narrowed to an empty source must not vanish.
         if state.candidates.isEmpty && (auxText ?? "").isEmpty {
             hide()
             return
         }
-
-        for (index, candidate) in state.candidates.enumerated() {
-            addCandidateRow(candidate, number: index + 1, selected: index == state.cursor)
+        listView.header = auxText.flatMap { $0.isEmpty ? nil : $0 }
+        listView.page = state.totalPages > 1 ? "\(state.page + 1) / \(state.totalPages)" : nil
+        listView.rows = state.candidates.enumerated().map { index, candidate in
+            CandidateListView.Row(
+                key: index < Self.selectKeys.count ? String(Self.selectKeys[index]) : "",
+                text: candidate.text,
+                note: candidate.description,
+                selected: index == state.cursor)
         }
-        if state.totalPages > 1 {
-            addFooterLabel("[\(state.page + 1)/\(state.totalPages)]")
-        }
-        if let aux = auxText, !aux.isEmpty {
-            addFooterLabel(aux)
-        }
-
-        positionPanel(cursorRect: cursorRect)
-    }
-
-    private func clearRows() {
-        for view in rowViews {
-            stackView.removeArrangedSubview(view)
-            view.removeFromSuperview()
-        }
-        rowViews.removeAll()
-    }
-
-    private func addCandidateRow(_ candidate: CandidateItem, number: Int, selected: Bool) {
-        let text = NSMutableAttributedString(
-            string: "\(number). \(candidate.text)",
-            attributes: [
-                .font: NSFont.systemFont(ofSize: Self.candidateFontSize),
-                .foregroundColor: selected ? NSColor.white : NSColor.labelColor,
-            ]
-        )
-        if let description = candidate.description {
-            text.append(
-                NSAttributedString(
-                    string: "  \(description)",
-                    attributes: [
-                        .font: NSFont.systemFont(ofSize: Self.footerFontSize),
-                        .foregroundColor: selected
-                            ? NSColor.white.withAlphaComponent(0.8)
-                            : NSColor.secondaryLabelColor,
-                    ]
-                ))
-        }
-
-        let label = NSTextField(labelWithAttributedString: text)
-        label.translatesAutoresizingMaskIntoConstraints = false
-        if selected {
-            label.backgroundColor = NSColor.selectedContentBackgroundColor
-            label.drawsBackground = true
-        } else {
-            label.backgroundColor = .clear
-            label.drawsBackground = false
-        }
-        stackView.addArrangedSubview(label)
-        rowViews.append(label)
-    }
-
-    private func addFooterLabel(_ text: String) {
-        let label = NSTextField(labelWithString: text)
-        label.font = NSFont.systemFont(ofSize: Self.footerFontSize)
-        label.textColor = NSColor.secondaryLabelColor
-        label.translatesAutoresizingMaskIntoConstraints = false
-        stackView.addArrangedSubview(label)
-        rowViews.append(label)
+        listView.needsDisplay = true
+        positionPanel(cursorRect: cursorRect, size: listView.fittingContentSize())
     }
 
     private var lastCursorRect: NSRect = .zero
 
-    private func positionPanel(cursorRect: NSRect?) {
+    private func positionPanel(cursorRect: NSRect?, size: NSSize) {
         if let rect = cursorRect {
             lastCursorRect = rect
         }
         let cursorRect = lastCursorRect
 
-        stackView.layoutSubtreeIfNeeded()
-        let contentSize = stackView.fittingSize
-        let panelWidth = max(contentSize.width + 16, Self.minPanelWidth)
-        let panelHeight = contentSize.height + 8
-
         guard cursorRect != .zero else {
-            panel.setFrame(
-                NSRect(x: 100, y: 100, width: panelWidth, height: panelHeight), display: true)
+            panel.setFrame(NSRect(origin: NSPoint(x: 100, y: 100), size: size), display: true)
             panel.orderFront(nil)
             return
         }
@@ -189,21 +252,128 @@ class CandidateWindowController {
         // the screen.
         let showAbove: Bool
         if let screen = NSScreen.main {
-            showAbove = cursorRect.origin.y - panelHeight < screen.visibleFrame.origin.y
+            showAbove = cursorRect.origin.y - size.height < screen.visibleFrame.origin.y
         } else {
             showAbove = false
         }
 
-        let originY: CGFloat
-        if showAbove {
-            originY = cursorRect.origin.y + cursorRect.size.height
-        } else {
-            originY = cursorRect.origin.y - panelHeight
-        }
-
+        let gap: CGFloat = 4
+        let originY =
+            showAbove
+            ? cursorRect.maxY + gap
+            : cursorRect.origin.y - size.height - gap
         panel.setFrame(
-            NSRect(x: cursorRect.origin.x, y: originY, width: panelWidth, height: panelHeight),
+            NSRect(origin: NSPoint(x: cursorRect.origin.x, y: originY), size: size), display: true)
+        panel.orderFront(nil)
+    }
+}
+
+/// Square badge near the cursor naming the input mode (`あ` / `A`), shown
+/// briefly when the mode changes.
+class ModeBadgeController {
+    private static let side = Swiss.grid * 4
+    private static let duration: TimeInterval = 0.6
+
+    private let panel = Swiss.panel()
+    private let label = NSTextField(labelWithString: "")
+    private var hideWork: DispatchWorkItem?
+
+    init() {
+        let box = Swiss.box(fill: .labelColor)
+        box.borderWidth = 0
+        panel.contentView = box
+        label.font = NSFont.systemFont(ofSize: 15, weight: .semibold)
+        label.textColor = .textBackgroundColor
+        label.alignment = .center
+        label.translatesAutoresizingMaskIntoConstraints = false
+        let content = box.contentView!
+        content.addSubview(label)
+        NSLayoutConstraint.activate([
+            label.centerXAnchor.constraint(equalTo: content.centerXAnchor),
+            label.centerYAnchor.constraint(equalTo: content.centerYAnchor),
+        ])
+    }
+
+    func show(mode: String, near cursorRect: NSRect) {
+        label.stringValue = mode == "ascii" ? "A" : "あ"
+        let origin =
+            cursorRect == .zero
+            ? NSPoint(x: 100, y: 100)
+            : NSPoint(x: cursorRect.minX, y: cursorRect.minY - Self.side - 4)
+        panel.setFrame(
+            NSRect(origin: origin, size: NSSize(width: Self.side, height: Self.side)),
             display: true)
         panel.orderFront(nil)
+
+        hideWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.panel.orderOut(nil) }
+        hideWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.duration, execute: work)
+    }
+}
+
+/// The hint under an open kanji part (`[display] part_hint`): the words Tab
+/// would complete to, or the kana under the live conversion. One line of
+/// plain text on the grid — no rule, no label; it only accompanies the
+/// preedit.
+final class ReadingView: NSView {
+    static let font = NSFont.systemFont(ofSize: 13)
+    var text = "" {
+        didSet { needsDisplay = true }
+    }
+    private let pad = Swiss.grid
+
+    override var isFlipped: Bool { true }
+
+    func fittingContentSize() -> NSSize {
+        let w = (text as NSString).size(withAttributes: [.font: Self.font]).width
+        return NSSize(width: ceil(w) + pad * 2, height: Swiss.grid * 3)
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let h = (text as NSString).size(withAttributes: [.font: Self.font]).height
+        (text as NSString).draw(
+            at: NSPoint(x: pad, y: (bounds.height - h) / 2),
+            withAttributes: [.font: Self.font, .foregroundColor: NSColor.labelColor])
+    }
+}
+
+class ReadingPanelController {
+    private let panel = Swiss.panel()
+    private let view = ReadingView()
+
+    init() {
+        let box = Swiss.box()
+        panel.contentView = box
+        view.translatesAutoresizingMaskIntoConstraints = false
+        let content = box.contentView!
+        content.addSubview(view)
+        NSLayoutConstraint.activate([
+            view.topAnchor.constraint(equalTo: content.topAnchor),
+            view.leadingAnchor.constraint(equalTo: content.leadingAnchor),
+            view.trailingAnchor.constraint(equalTo: content.trailingAnchor),
+            view.bottomAnchor.constraint(equalTo: content.bottomAnchor),
+        ])
+    }
+
+    var isVisible: Bool { panel.isVisible }
+
+    /// `cursorRect: nil` keeps the panel where it is (the anchor doesn't
+    /// move while a part is being typed).
+    func show(_ text: String, cursorRect: NSRect?) {
+        view.text = text
+        let size = view.fittingContentSize()
+        var origin = panel.frame.origin
+        if let rect = cursorRect {
+            origin =
+                rect == .zero
+                ? NSPoint(x: 100, y: 100) : NSPoint(x: rect.minX, y: rect.minY - size.height - 4)
+        }
+        panel.setFrame(NSRect(origin: origin, size: size), display: true)
+        panel.orderFront(nil)
+    }
+
+    func hide() {
+        panel.orderOut(nil)
     }
 }

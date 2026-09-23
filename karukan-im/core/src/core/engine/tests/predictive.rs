@@ -18,6 +18,21 @@ fn predictive_dict_candidates_carry_full_reading() {
 }
 
 #[test]
+fn predictive_off_keeps_only_exact_matches() {
+    let mut engine = InputMethodEngine::new();
+    engine.config.predictive = false;
+    engine.dicts.system = Some(dict_from_json(
+        r#"[{"reading":"わせだ","candidates":[{"surface":"早稲田","score":1000.0}]}]"#,
+    ));
+    let mut cache = LearningCache::new(LearningConfig::default());
+    cache.record("わせだし", "早稲田市");
+    engine.learning = Some(cache);
+
+    assert!(engine.lookup_dict_candidates("わせ").is_empty());
+    assert!(engine.lookup_learning_candidates("わせ").is_empty());
+}
+
+#[test]
 fn predictive_needs_two_typed_chars() {
     let mut engine = InputMethodEngine::new();
     engine.dicts.system = Some(dict_from_json(

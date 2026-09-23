@@ -128,7 +128,7 @@ pub struct CandidateList {
 
 impl CandidateList {
     /// Default page size for candidate display
-    pub const DEFAULT_PAGE_SIZE: usize = 9;
+    pub const DEFAULT_PAGE_SIZE: usize = 7;
 
     /// Create a new candidate list
     pub fn new(candidates: Vec<Candidate>) -> Self {
@@ -333,17 +333,18 @@ mod tests {
 
     #[test]
     fn test_candidate_list_pagination() {
-        // Default page_size is 9, so 20 items = 3 pages (9+9+2)
-        let items: Vec<_> = (1..=20).map(|i| format!("item{}", i)).collect();
+        // Default page_size is 7 (the asdfjkl labels), so 16 items = 3
+        // pages (7+7+2)
+        let items: Vec<_> = (1..=16).map(|i| format!("item{}", i)).collect();
         let mut candidates = CandidateList::from_strings(items);
 
         assert_eq!(candidates.total_pages(), 3);
         assert_eq!(candidates.current_page(), 0);
-        assert_eq!(candidates.page_candidates().len(), 9);
+        assert_eq!(candidates.page_candidates().len(), 7);
 
         candidates.next_page();
         assert_eq!(candidates.current_page(), 1);
-        assert_eq!(candidates.page_start(), 9);
+        assert_eq!(candidates.page_start(), 7);
 
         candidates.next_page();
         assert_eq!(candidates.current_page(), 2);
@@ -366,6 +367,6 @@ mod tests {
         // Move to second page and select item 2
         candidates.next_page();
         candidates.select_on_page(2);
-        assert_eq!(candidates.selected_text(), Some("item11")); // 9 + 2 = 11
+        assert_eq!(candidates.selected_text(), Some("item9")); // 7 + 2 = 9
     }
 }

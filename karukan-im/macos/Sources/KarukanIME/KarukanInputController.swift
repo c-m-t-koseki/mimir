@@ -10,6 +10,10 @@ import InputMethodKit
 @objc(KarukanInputController)
 class KarukanInputController: IMKInputController {
     static let candidateWindow = CandidateWindowController()
+    static let modeBadge = ModeBadgeController()
+    static let readingPanel = ReadingPanelController()
+    /// Last input mode the engine reported; a change shows the badge.
+    static var lastMode = "kana"
 
     /// Mirrors whether the engine currently shows a preedit (updated from
     /// engine actions). Used to decide when to refresh surrounding text.
@@ -89,7 +93,31 @@ class KarukanInputController: IMKInputController {
             return false
         }
         apply(actions: result.actions, client: client)
+        showModeChange(result.mode, client: client)
+        showHint(result.hint, client: client)
         return result.consumed
+    }
+
+    private func showHint(_ hint: String?, client: any IMKTextInput) {
+        guard let hint, !Self.candidateWindow.isVisible else {
+            Self.readingPanel.hide()
+            return
+        }
+        var rect: NSRect?
+        if !Self.readingPanel.isVisible {
+            var lineRect = NSRect.zero
+            client.attributes(forCharacterIndex: 0, lineHeightRectangle: &lineRect)
+            rect = lineRect
+        }
+        Self.readingPanel.show(hint, cursorRect: rect)
+    }
+
+    private func showModeChange(_ mode: String?, client: any IMKTextInput) {
+        guard let mode, mode != Self.lastMode else { return }
+        Self.lastMode = mode
+        var rect = NSRect.zero
+        client.attributes(forCharacterIndex: 0, lineHeightRectangle: &rect)
+        Self.modeBadge.show(mode: mode, near: rect)
     }
 
     /// Send the return-to-hiragana toggle (Super_R) to the engine and apply
@@ -98,6 +126,8 @@ class KarukanInputController: IMKInputController {
         let key = EngineKeyEvent(keysym: KeyCodeMap.superRKeysym, modifiers: KeyModifiers())
         if let result = engineClient.processKeySync(key) {
             apply(actions: result.actions, client: client)
+            showModeChange(result.mode, client: client)
+            showHint(result.hint, client: client)
         }
     }
 
@@ -129,6 +159,7 @@ class KarukanInputController: IMKInputController {
     /// Commit any pending composition via the engine and apply the cleanup
     /// actions it emits (clear preedit, hide candidates/aux).
     private func flushComposition(client: any IMKTextInput) {
+        Self.readingPanel.hide()
         if let result = engineClient.commitSync() {
             apply(actions: result.actions, client: client)
         } else {
