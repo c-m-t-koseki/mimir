@@ -180,6 +180,7 @@ impl ImServer {
                 PartMode::Ascii => "ascii",
                 PartMode::Plain | PartMode::Part => "kana",
             },
+            reading: self.part.live_reading(&self.engine),
         })
         .map_err(internal_error)
     }

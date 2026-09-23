@@ -92,7 +92,19 @@ impl PartLayer {
         if self.register.is_some() && key.is_press && !key.keysym.is_modifier() {
             return self.registration_key(engine, key);
         }
-        self.dispatch(engine, key)
+        let result = self.dispatch(engine, key);
+        plain_aux(engine, result)
+    }
+
+    /// The kana under the live conversion, for the frontend to show beside
+    /// it; `None` outside a part or when the preedit already is that kana.
+    pub fn live_reading(&self, engine: &InputMethodEngine) -> Option<String> {
+        if self.mode != PartMode::Part || self.register.is_some() {
+            return None;
+        }
+        let kana = engine.composing_kana()?;
+        let shown = engine.preedit().map(|p| p.text().to_string());
+        (shown.as_deref() != Some(kana.as_str())).then_some(kana)
     }
 
     fn dispatch(&mut self, engine: &mut InputMethodEngine, key: &KeyEvent) -> EngineResult {
@@ -448,6 +460,30 @@ fn part_opener(key: &KeyEvent, ch: char) -> Option<Option<char>> {
     (ch == 'q').then_some(None)
 }
 
+/// The engine's aux line carries mode and source markers (`[あ][変換:🤖]`,
+/// chunk counters); the candidate window shows just the reading instead.
+fn plain_aux(engine: &InputMethodEngine, mut result: EngineResult) -> EngineResult {
+    let had_aux = result.actions.iter().any(|a| {
+        matches!(
+            a,
+            EngineAction::UpdateAuxText(_) | EngineAction::HideAuxText
+        )
+    });
+    result.actions.retain(|a| {
+        !matches!(
+            a,
+            EngineAction::UpdateAuxText(_) | EngineAction::HideAuxText
+        )
+    });
+    if had_aux {
+        result.actions.push(match engine.state() {
+            InputState::Conversion { reading, .. } => EngineAction::UpdateAuxText(reading.clone()),
+            _ => EngineAction::HideAuxText,
+        });
+    }
+    result
+}
+
 fn without_suggestions(mut result: EngineResult) -> EngineResult {
     result.actions.retain(|a| {
         !matches!(
@@ -599,6 +635,25 @@ mod tests {
         // Plain mode with nothing composing leaves Ctrl+H to the app.
         feed(&mut layer, &mut engine, " ");
         assert!(!layer.process_key(&mut engine, &ctrl('h')).consumed);
+    }
+
+    #[test]
+    fn conversion_aux_is_just_the_reading() {
+        let (mut layer, mut engine) = setup();
+        feed(&mut layer, &mut engine, "Kaigi");
+        let result = layer.process_key(&mut engine, &ctrl('n'));
+        let aux: Vec<_> = result
+            .actions
+            .iter()
+            .filter_map(|a| match a {
+                EngineAction::UpdateAuxText(t) => Some(t.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(aux, ["かいぎ"]);
+        // No model: the preedit is the kana itself, nothing to show beside it.
+        layer.process_key(&mut engine, &ctrl('g'));
+        assert_eq!(layer.live_reading(&engine), None);
     }
 
     #[test]

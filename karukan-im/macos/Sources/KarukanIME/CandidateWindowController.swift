@@ -311,3 +311,46 @@ class ModeBadgeController {
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.duration, execute: work)
     }
 }
+
+/// The kana under the live conversion, in small type just below the
+/// preedit: 会議 in the text, かいぎ under it.
+class ReadingPanelController {
+    private let panel = Swiss.panel()
+    private let label = NSTextField(labelWithString: "")
+
+    init() {
+        let box = Swiss.box()
+        panel.contentView = box
+        label.font = NSFont.systemFont(ofSize: 13)
+        label.textColor = .secondaryLabelColor
+        label.translatesAutoresizingMaskIntoConstraints = false
+        let content = box.contentView!
+        content.addSubview(label)
+        NSLayoutConstraint.activate([
+            label.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: Swiss.grid),
+            label.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -Swiss.grid),
+            label.centerYAnchor.constraint(equalTo: content.centerYAnchor),
+        ])
+    }
+
+    var isVisible: Bool { panel.isVisible }
+
+    /// `cursorRect: nil` keeps the panel where it is (the anchor doesn't
+    /// move while a part is being typed).
+    func show(_ text: String, cursorRect: NSRect?) {
+        label.stringValue = text
+        let size = NSSize(width: label.fittingSize.width + Swiss.grid * 2, height: Swiss.grid * 3)
+        var origin = panel.frame.origin
+        if let rect = cursorRect {
+            origin =
+                rect == .zero
+                ? NSPoint(x: 100, y: 100) : NSPoint(x: rect.minX, y: rect.minY - size.height - 4)
+        }
+        panel.setFrame(NSRect(origin: origin, size: size), display: true)
+        panel.orderFront(nil)
+    }
+
+    func hide() {
+        panel.orderOut(nil)
+    }
+}

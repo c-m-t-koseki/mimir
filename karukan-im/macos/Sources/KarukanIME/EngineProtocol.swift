@@ -11,6 +11,8 @@ struct KeyResult: Decodable {
     let processKeyMs: UInt64?
     /// "kana" or "ascii"; absent from older engines.
     let mode: String?
+    /// Kana under the live conversion; absent when there is nothing to add.
+    let reading: String?
 }
 
 struct PreeditAttr: Decodable {

@@ -11,6 +11,7 @@ import InputMethodKit
 class KarukanInputController: IMKInputController {
     static let candidateWindow = CandidateWindowController()
     static let modeBadge = ModeBadgeController()
+    static let readingPanel = ReadingPanelController()
     /// Last input mode the engine reported; a change shows the badge.
     static var lastMode = "kana"
 
@@ -93,7 +94,22 @@ class KarukanInputController: IMKInputController {
         }
         apply(actions: result.actions, client: client)
         showModeChange(result.mode, client: client)
+        showReading(result.reading, client: client)
         return result.consumed
+    }
+
+    private func showReading(_ reading: String?, client: any IMKTextInput) {
+        guard let reading, !Self.candidateWindow.isVisible else {
+            Self.readingPanel.hide()
+            return
+        }
+        var rect: NSRect?
+        if !Self.readingPanel.isVisible {
+            var lineRect = NSRect.zero
+            client.attributes(forCharacterIndex: 0, lineHeightRectangle: &lineRect)
+            rect = lineRect
+        }
+        Self.readingPanel.show(reading, cursorRect: rect)
     }
 
     private func showModeChange(_ mode: String?, client: any IMKTextInput) {
@@ -111,6 +127,7 @@ class KarukanInputController: IMKInputController {
         if let result = engineClient.processKeySync(key) {
             apply(actions: result.actions, client: client)
             showModeChange(result.mode, client: client)
+            showReading(result.reading, client: client)
         }
     }
 
@@ -142,6 +159,7 @@ class KarukanInputController: IMKInputController {
     /// Commit any pending composition via the engine and apply the cleanup
     /// actions it emits (clear preedit, hide candidates/aux).
     private func flushComposition(client: any IMKTextInput) {
+        Self.readingPanel.hide()
         if let result = engineClient.commitSync() {
             apply(actions: result.actions, client: client)
         } else {

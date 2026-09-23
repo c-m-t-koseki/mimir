@@ -293,6 +293,12 @@ impl InputMethodEngine {
             .with_action(EngineAction::HideAuxText)
     }
 
+    /// The kana being composed, unfired romaji included (`かいg`), while
+    /// Composing; what the live conversion stands in for.
+    pub fn composing_kana(&self) -> Option<String> {
+        matches!(self.state, InputState::Composing { .. }).then(|| self.input_buf.display())
+    }
+
     /// End the composition without committing, returning its kana reading
     /// (the word-registration flow takes the reading, then asks for the word).
     pub fn take_reading(&mut self) -> String {
