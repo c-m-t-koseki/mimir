@@ -360,6 +360,39 @@ impl Settings {
         Ok(settings)
     }
 
+    /// Set one `[section] key = value` in the user's config file, keeping
+    /// every other entry (comments are not kept: the file is rewritten from
+    /// its parsed table). The result must still load, or the file is left
+    /// as it was and the error returned.
+    pub fn set_value(section: &str, key: &str, value: toml::Value) -> Result<()> {
+        let Some(path) = Self::config_file() else {
+            anyhow::bail!("Could not determine config directory");
+        };
+        Self::set_value_in(&path, section, key, value)
+    }
+
+    pub fn set_value_in(path: &Path, section: &str, key: &str, value: toml::Value) -> Result<()> {
+        let before = fs::read_to_string(path).unwrap_or_default();
+        let mut table: toml::Table = before.parse()?;
+        let entry = table
+            .entry(section)
+            .or_insert_with(|| toml::Value::Table(toml::Table::new()));
+        let Some(section_table) = entry.as_table_mut() else {
+            anyhow::bail!("[{section}] is not a table");
+        };
+        section_table.insert(key.to_string(), value);
+        let after = toml::to_string(&table)?;
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(path, &after)?;
+        if let Err(e) = Self::load_from(path) {
+            fs::write(path, before)?;
+            return Err(e.context(format!("[{section}] {key} rejected")));
+        }
+        Ok(())
+    }
+
     /// Save settings to the default configuration file
     pub fn save(&self) -> Result<()> {
         let Some(config_file) = Self::config_file() else {
@@ -757,5 +790,24 @@ strategy = "main"
         let path = file.path().to_path_buf();
         let settings = Settings::load_from(&path).unwrap();
         assert_eq!(settings.conversion.strategy, StrategyMode::Main);
+    }
+
+    #[test]
+    fn test_set_value_keeps_other_entries_and_rejects_bad_values() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, "[display]\ncandidate_window = \"conversion\"\n").unwrap();
+
+        Settings::set_value_in(&path, "display", "part_hint", "reading".into()).unwrap();
+        let settings = Settings::load_from(&path).unwrap();
+        assert_eq!(settings.display.part_hint, PartHint::Reading);
+        assert_eq!(
+            settings.display.candidate_window,
+            CandidateWindow::Conversion
+        );
+
+        assert!(Settings::set_value_in(&path, "display", "part_hint", "bogus".into()).is_err());
+        let settings = Settings::load_from(&path).unwrap();
+        assert_eq!(settings.display.part_hint, PartHint::Reading);
     }
 }

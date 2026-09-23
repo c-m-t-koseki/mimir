@@ -61,7 +61,7 @@ Honjitu no Kaigi ha  →  本日の会議は
 
 候補窓が開いている間に別の文字を打つと、選択中の候補で確定してから入力が続く。大文字なら、確定したうえで次のパートを開く。
 
-パート入力中は、preedit の下の小さな枠に補助表示を出す。何を出すかは `config.toml` の `[display] part_hint` で選ぶ。
+パート入力中は、preedit の下の小さな枠に補助表示を出す。何を出すかは `config.toml` の `[display] part_hint` で選ぶ（「設定」ウィンドウからも変えられる）。
 
 | 値 | 表示 |
 |---|---|
@@ -84,3 +84,14 @@ scripts/skk2mozc.py ~/Library/Application\ Support/AquaSKK/skk-jisyo.utf8 \
 ```
 
 取り込めるのは送りなしエントリだけである。ユーザー辞書の候補はモデルの候補より上に並ぶので、SKK-JISYO.L のような大きな一般辞書は入れない方がよい。
+
+## 設定ウィンドウ
+
+入力メニュー（メニューバーの「か」）の「Karukan の設定…」で開く。変えられるのは次の項目で、変更はその場で `config.toml` に保存され、エンジンを再起動して反映される。
+
+- 変換中の補助表示（`[display] part_hint`）
+- 予測候補を候補窓に出す（`[conversion] predictive`）
+- 変換結果を学習する（`[learning] enabled`）
+- メイン / 軽量の変換モデル（`[conversion] model` / `light_model`。`[models]` に定義したものから選ぶ）
+
+保存時に `config.toml` を読み直して書き出すので、ファイル中のコメントは消える。設定値そのものは残る。
