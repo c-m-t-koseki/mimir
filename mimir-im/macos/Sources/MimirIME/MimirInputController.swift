@@ -110,6 +110,7 @@ class MimirInputController: IMKInputController {
             return false
         }
         Self.candidateWindow.showsKeys = result.selectKeys ?? true
+        if let chars = result.selectChars { Self.candidateWindow.keys = Array(chars) }
         Self.candidateWindow.layout = result.candidateLayout ?? "vertical"
         apply(actions: result.actions, client: client)
         showRuby(result.ruby, client: client)

@@ -28,6 +28,7 @@
 
 use super::engine::{EngineAction, EngineResult, InputMethodEngine};
 use super::keycode::{KeyEvent, KeyModifiers, Keysym};
+use super::keymap::Keymap;
 use super::preedit::{AttributeType, Preedit, PreeditAttribute};
 use super::state::InputState;
 use crate::config::Settings;
@@ -38,12 +39,6 @@ const RECENT_MAX_CHARS: usize = 12;
 
 /// Completions listed in the hint panel.
 const HINT_COMPLETIONS: usize = 3;
-
-/// Keys that pick a candidate from the open window, in page order: the
-/// index and middle fingers' home keys, then the keys above them, right
-/// hand before left — the likeliest candidates on the easiest keys. The
-/// keyboard layout of the window draws each candidate where its key is.
-pub const SELECT_KEYS: &str = "jkfduire";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PartMode {
@@ -59,6 +54,8 @@ pub struct PartLayer {
     mode: PartMode,
     /// What [`Self::hint`] reports while a part is typed.
     hint: PartHint,
+    /// Which keys do what (`[keys]`).
+    keys: Keymap,
     /// The open part is abbrev input (`/`).
     abbrev: bool,
     /// The part's reading right of the caret, held out of the conversion
@@ -123,6 +120,7 @@ impl PartLayer {
             mode: PartMode::Plain,
             hint: PartHint::default(),
             skk_style: true,
+            keys: Keymap::default(),
             abbrev: false,
             split: None,
             stepped: false,
@@ -173,6 +171,16 @@ impl PartLayer {
             && self.deleted != Some(true)
     }
 
+    pub fn with_keys(self, keys: Keymap) -> Self {
+        Self { keys, ..self }
+    }
+
+    /// The keys picking a candidate, in page order (the frontend labels
+    /// the window with them).
+    pub fn select_keys(&self) -> String {
+        self.keys.select.iter().collect()
+    }
+
     pub fn with_skk_style(self, skk_style: bool) -> Self {
         Self { skk_style, ..self }
     }
@@ -214,11 +222,11 @@ impl PartLayer {
         // Nothing composing: every Ctrl chord but our own Ctrl+J belongs to
         // the application (Ctrl+U kills the line, Ctrl+K kills to its end…),
         // so it never reaches the engine and its bindings.
-        let ctrl_j = matches!(key.keysym, Keysym::KEY_J | Keysym::KEY_J_UPPER);
-        if !composing && ctrl && !ctrl_j && !self.abbrev {
+        let kana = self.keys.kana.hit(key);
+        if !composing && ctrl && !kana && !self.abbrev {
             return EngineResult::not_consumed();
         }
-        if composing && ctrl && matches!(key.keysym, Keysym::KEY_U | Keysym::KEY_U_UPPER) {
+        if composing && key.is_press && self.keys.discard.hit(key) {
             return self.discard(engine);
         }
         if key.is_press && !key.keysym.is_modifier() {
@@ -372,8 +380,7 @@ impl PartLayer {
             }
 
             // Ctrl+J / かな: back to kana from anywhere, closing an open part.
-            let ctrl_j = m.control_key && matches!(key.keysym, Keysym::KEY_J | Keysym::KEY_J_UPPER);
-            if ctrl_j || key.keysym.is_mode_toggle_key() {
+            if self.keys.kana.hit(key) || key.keysym.is_mode_toggle_key() {
                 let result = self.close(engine);
                 self.enter(engine, PartMode::Plain);
                 // Also leave the engine's own katakana mode (Ctrl+K).
@@ -390,8 +397,11 @@ impl PartLayer {
         }
 
         // No katakana mode: Ctrl+K is the application's (kill-line) unless
-        // something is composing.
-        if m.control_key && matches!(key.keysym, Keysym::KEY_K | Keysym::KEY_K_UPPER) {
+        // something is composing — or it is bound in `[keys]`.
+        if m.control_key
+            && matches!(key.keysym, Keysym::KEY_K | Keysym::KEY_K_UPPER)
+            && !self.keys.binds(key)
+        {
             return match (self.mode, engine.state()) {
                 (PartMode::Ascii, _) | (_, InputState::Empty) => EngineResult::not_consumed(),
                 _ => EngineResult::consumed(),
@@ -598,7 +608,7 @@ impl PartLayer {
 
     fn plain_key(&mut self, engine: &mut InputMethodEngine, key: &KeyEvent) -> EngineResult {
         if let Some(ch) = typed_char(key) {
-            if ch == '/' && matches!(engine.state(), InputState::Empty) {
+            if self.keys.abbrev.hit(key) && matches!(engine.state(), InputState::Empty) {
                 self.enter(engine, PartMode::Part);
                 engine.set_live_conversion(false);
                 engine.start_abbrev();
@@ -614,7 +624,7 @@ impl PartLayer {
             if let Some(first) = part_opener(key, ch) {
                 return self.start_part(engine, first);
             }
-            if ch == 'l' {
+            if self.keys.ascii.hit(key) {
                 return self.switch_to_ascii(engine);
             }
             if !self.skk_style && ch.is_ascii_lowercase() {
@@ -639,59 +649,49 @@ impl PartLayer {
         if self.abbrev {
             return self.abbrev_key(engine, key);
         }
-        let m = key.modifiers;
-        if m.control_key {
-            return match key.keysym {
-                // Ctrl+N: open the candidate window (what Space does upstream).
-                Keysym::KEY_N | Keysym::KEY_N_UPPER => {
-                    if matches!(engine.state(), InputState::Empty) {
-                        EngineResult::consumed()
-                    } else {
-                        engine.process_key(&press(Keysym::SPACE))
-                    }
-                }
-                Keysym::KEY_G | Keysym::KEY_G_UPPER => self.cancel_part(engine),
-                Keysym::KEY_R | Keysym::KEY_R_UPPER => self.start_registration(engine),
-                Keysym::KEY_I | Keysym::KEY_I_UPPER => engine.open_completions(),
-                Keysym::KEY_B | Keysym::KEY_B_UPPER if composing(engine) => {
-                    self.move_split(engine, |cut, _| cut.saturating_sub(1))
-                }
-                Keysym::KEY_F | Keysym::KEY_F_UPPER if composing(engine) => {
-                    self.move_split(engine, |cut, _| cut + 1)
-                }
-                Keysym::KEY_A | Keysym::KEY_A_UPPER if composing(engine) => {
-                    self.move_split(engine, |_, _| 1)
-                }
-                Keysym::KEY_E | Keysym::KEY_E_UPPER if composing(engine) => {
-                    self.move_split(engine, |_, len| len)
-                }
-                _ => engine.process_key(key),
+        let k = &self.keys;
+        if k.convert.hit(key) {
+            return if matches!(engine.state(), InputState::Empty) {
+                EngineResult::consumed()
+            } else {
+                engine.process_key(&press(Keysym::SPACE))
             };
         }
+        if k.cancel.hit(key) {
+            return self.cancel_part(engine);
+        }
+        if k.register.hit(key) {
+            return self.start_registration(engine);
+        }
+        if k.complete.hit(key) {
+            return engine.open_completions();
+        }
+        if let Some(to) = self.split_move(key).filter(|_| composing(engine)) {
+            return self.move_split(engine, to);
+        }
+        if self.keys.commit.hit(key) {
+            let result = self.close(engine);
+            self.enter(engine, PartMode::Plain);
+            return result;
+        }
         let Some(ch) = typed_char(key) else {
-            return match key.keysym {
-                // Tab and Ctrl+I are the same key (and the same thing):
-                // complete from what was typed before.
-                Keysym::TAB => engine.open_completions(),
-                Keysym::LEFT if composing(engine) => {
-                    self.move_split(engine, |cut, _| cut.saturating_sub(1))
-                }
-                Keysym::RIGHT if composing(engine) => self.move_split(engine, |cut, _| cut + 1),
-                Keysym::HOME if composing(engine) => self.move_split(engine, |_, _| 1),
-                Keysym::END if composing(engine) => self.move_split(engine, |_, len| len),
-                Keysym::RETURN => {
-                    let result = self.close(engine);
-                    self.enter(engine, PartMode::Plain);
-                    result
-                }
-                Keysym::ESCAPE => self.cancel_part(engine),
-                _ => self.after_edit(engine, key),
+            // Bindings on Ctrl chords and named keys; a typed character's
+            // wait for the z sequences and capitals below.
+            if self.keys.ascii.hit(key) {
+                return self.switch_to_ascii(engine);
+            }
+            if self.keys.katakana.hit(key) && !matches!(engine.state(), InputState::Empty) {
+                return self.commit_katakana(engine);
+            }
+            return match key.modifiers.control_key {
+                true => engine.process_key(key),
+                false => self.after_edit(engine, key),
             };
         };
         if z_sequence(engine, ch) {
             return engine.feed_romaji(ch);
         }
-        if ch == ' ' {
+        if self.keys.close.hit(key) {
             return self.close_keeping_tail(engine);
         }
         if let Some(first) = part_opener(key, ch) {
@@ -705,10 +705,10 @@ impl PartLayer {
             }
             return self.start_part(engine, first);
         }
-        if ch == 'l' {
+        if self.keys.ascii.hit(key) {
             return self.switch_to_ascii(engine);
         }
-        if ch == 'q' && !matches!(engine.state(), InputState::Empty) {
+        if self.keys.katakana.hit(key) && !matches!(engine.state(), InputState::Empty) {
             return self.commit_katakana(engine);
         }
         if matches!(ch, ',' | '.' | '?' | '!') {
@@ -719,18 +719,32 @@ impl PartLayer {
         engine.process_key(key)
     }
 
+    /// The caret move a key asks for (`[keys] left` / `right` / `home` /
+    /// `end`), as the new cut given the cut and the reading's length.
+    fn split_move(&self, key: &KeyEvent) -> Option<fn(usize, usize) -> usize> {
+        let k = &self.keys;
+        if k.left.hit(key) {
+            Some(|cut, _| cut.saturating_sub(1))
+        } else if k.right.hit(key) {
+            Some(|cut, _| cut + 1)
+        } else if k.home.hit(key) {
+            Some(|_, _| 1)
+        } else if k.end.hit(key) {
+            Some(|_, len| len)
+        } else {
+            None
+        }
+    }
+
     /// Abbrev input: every printable key is a letter of it; Space or Ctrl+N
     /// converts, Enter commits it as typed (not learned: nothing was
     /// chosen), Ctrl+G / Escape cancels.
     fn abbrev_key(&mut self, engine: &mut InputMethodEngine, key: &KeyEvent) -> EngineResult {
         let empty = matches!(engine.state(), InputState::Empty);
-        let ctrl = key.modifiers.control_key;
-        let is =
-            |upper: Keysym, lower: Keysym| ctrl && (key.keysym == upper || key.keysym == lower);
-        if is(Keysym::KEY_G_UPPER, Keysym::KEY_G) || key.keysym == Keysym::ESCAPE {
+        if self.keys.cancel.hit(key) {
             return self.cancel_part(engine);
         }
-        if is(Keysym::KEY_N_UPPER, Keysym::KEY_N) || (!ctrl && key.keysym == Keysym::SPACE) {
+        if self.keys.convert.hit(key) || self.keys.close.hit(key) {
             return if empty {
                 self.enter(engine, PartMode::Plain);
                 EngineResult::consumed()
@@ -738,7 +752,7 @@ impl PartLayer {
                 engine.convert()
             };
         }
-        if key.keysym == Keysym::RETURN {
+        if self.keys.commit.hit(key) {
             let result = if empty {
                 EngineResult::consumed()
             } else {
@@ -772,54 +786,42 @@ impl PartLayer {
     }
 
     fn conversion_key(&mut self, engine: &mut InputMethodEngine, key: &KeyEvent) -> EngineResult {
-        let m = key.modifiers;
-        if m.control_key {
-            return match key.keysym {
-                Keysym::KEY_N | Keysym::KEY_N_UPPER | Keysym::KEY_I | Keysym::KEY_I_UPPER => {
-                    self.stepped = true;
-                    engine.process_key(&press(Keysym::TAB))
-                }
-                Keysym::KEY_P | Keysym::KEY_P_UPPER => {
-                    self.stepped = true;
-                    engine.process_key(&KeyEvent::new(
-                        Keysym::TAB,
-                        KeyModifiers::new().with_shift(true),
-                        true,
-                    ))
-                }
-                // Ctrl+G: close the window, back to the part's composition.
-                Keysym::KEY_G | Keysym::KEY_G_UPPER => engine.process_key(&press(Keysym::ESCAPE)),
-                Keysym::KEY_R | Keysym::KEY_R_UPPER => self.start_registration(engine),
-                Keysym::KEY_B | Keysym::KEY_B_UPPER => {
-                    self.move_split(engine, |cut, _| cut.saturating_sub(1))
-                }
-                Keysym::KEY_F | Keysym::KEY_F_UPPER => self.move_split(engine, |cut, _| cut + 1),
-                Keysym::KEY_A | Keysym::KEY_A_UPPER => self.move_split(engine, |_, _| 1),
-                Keysym::KEY_E | Keysym::KEY_E_UPPER => self.move_split(engine, |_, len| len),
-                _ => engine.process_key(key),
-            };
+        if self.keys.next.hit(key) {
+            self.stepped = true;
+            return engine.process_key(&press(Keysym::TAB));
         }
-        let Some(ch) = typed_char(key) else {
-            return match key.keysym {
-                Keysym::RETURN => self.commit_conversion_all(engine),
-                Keysym::LEFT => self.move_split(engine, |cut, _| cut.saturating_sub(1)),
-                Keysym::RIGHT => self.move_split(engine, |cut, _| cut + 1),
-                Keysym::HOME => self.move_split(engine, |_, _| 1),
-                Keysym::END => self.move_split(engine, |_, len| len),
-                Keysym::TAB => {
-                    self.stepped = true;
-                    engine.process_key(key)
-                }
-                _ => engine.process_key(key),
-            };
-        };
-        if ch == 'q' {
+        if self.keys.prev.hit(key) {
+            self.stepped = true;
+            return engine.process_key(&KeyEvent::new(
+                Keysym::TAB,
+                KeyModifiers::new().with_shift(true),
+                true,
+            ));
+        }
+        // Cancel closes the window, back to the part's composition.
+        if self.keys.cancel.hit(key) {
+            return engine.process_key(&press(Keysym::ESCAPE));
+        }
+        if self.keys.register.hit(key) {
+            return self.start_registration(engine);
+        }
+        if let Some(to) = self.split_move(key) {
+            return self.move_split(engine, to);
+        }
+        if self.keys.commit.hit(key) {
+            return self.commit_conversion_all(engine);
+        }
+        if self.keys.katakana.hit(key) {
             return self.commit_katakana(engine);
         }
+        let Some(ch) = typed_char(key) else {
+            return engine.process_key(key);
+        };
         // Picking by letter is for a window just opened; once the selection
         // was stepped to, the letter types on.
-        if let Some(index) = SELECT_KEYS
-            .find(ch)
+        if let Some(index) = self
+            .keys
+            .select_index(ch)
             .filter(|_| !key.modifiers.shift_key && !self.stepped)
         {
             let result = engine.select_candidate_on_page(index);
@@ -829,7 +831,7 @@ impl PartLayer {
             }
             return result;
         }
-        if ch == ' ' {
+        if self.keys.close.hit(key) {
             return self.commit_conversion(engine);
         }
         if let Some(first) = part_opener(key, ch) {
@@ -858,17 +860,16 @@ impl PartLayer {
     /// word through the ordinary layer, its commits captured.
     fn registration_key(&mut self, engine: &mut InputMethodEngine, key: &KeyEvent) -> EngineResult {
         let idle = matches!(engine.state(), InputState::Empty);
-        let ctrl = key.modifiers.control_key;
+        let abort = self.keys.cancel.hit(key);
+        let save = self.keys.commit.hit(key);
         let reg = self.register.as_mut().expect("registering");
         if idle && self.mode != PartMode::Part {
-            let abort = key.keysym == Keysym::ESCAPE
-                || (ctrl && matches!(key.keysym, Keysym::KEY_G | Keysym::KEY_G_UPPER));
             if abort {
                 self.register = None;
                 return EngineResult::consumed()
                     .with_action(EngineAction::UpdatePreedit(Preedit::new()));
             }
-            if key.keysym == Keysym::RETURN {
+            if save {
                 let reg = self.register.take().expect("registering");
                 if reg.word.is_empty() {
                     return EngineResult::consumed()
@@ -1589,6 +1590,35 @@ mod tests {
         );
         let shown = kana_tail_preedit("きょうはk", "今日はk", 1).unwrap();
         assert_eq!(shown.text(), "今日はk");
+    }
+
+    #[test]
+    fn keys_follow_the_keymap() {
+        let mut settings = crate::config::Settings::default_keys();
+        settings.katakana = "q C-o".into();
+        settings.ascii = ";".into();
+        settings.select = "asdfghjk".into();
+        let (layer, mut engine) = setup();
+        let mut layer = layer.with_keys(Keymap::parse(&settings).unwrap());
+        assert_eq!(layer.select_keys(), "asdfghjk");
+        // A Ctrl chord commits in katakana too.
+        feed(&mut layer, &mut engine, "Tesuto");
+        let result = layer.process_key(&mut engine, &ctrl('o'));
+        assert!(
+            result
+                .actions
+                .iter()
+                .any(|a| matches!(a, EngineAction::Commit(t) if t == "テスト"))
+        );
+        // Candidates are picked by the new keys.
+        feed(&mut layer, &mut engine, "Kaigi");
+        layer.process_key(&mut engine, &ctrl('n'));
+        assert_eq!(feed(&mut layer, &mut engine, "a"), "かいぎ");
+        // ; switches to ASCII, l no longer does.
+        feed(&mut layer, &mut engine, "l");
+        assert_eq!(layer.mode(), PartMode::Plain);
+        feed(&mut layer, &mut engine, ";");
+        assert_eq!(layer.mode(), PartMode::Ascii);
     }
 
     #[test]
