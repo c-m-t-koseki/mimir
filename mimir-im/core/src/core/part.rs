@@ -73,6 +73,12 @@ pub struct PartLayer {
     tail_chars: usize,
     /// `ReadingDisplay::Tail`: the pause before they convert too.
     tail_delay_ms: u64,
+    /// The pause after a deletion.
+    tail_delete_delay_ms: u64,
+    /// The last key deleted from the part: `Some(true)` when what it took
+    /// was a kana standing on its own, leaving the conversion untouched
+    /// (規定で → 規定), `Some(false)` when it cut into a kanji run.
+    deleted: Option<bool>,
     /// Typing paused (`refresh`): the tail shows converted too.
     settled: bool,
     /// SKK style: only a capital opens a part. The layer's own default
@@ -123,6 +129,8 @@ impl PartLayer {
             reading_display: ReadingDisplay::None,
             tail_chars: 1,
             tail_delay_ms: 250,
+            tail_delete_delay_ms: 600,
+            deleted: None,
             settled: false,
             register: None,
             recent: None,
@@ -141,11 +149,13 @@ impl PartLayer {
         reading_display: ReadingDisplay,
         tail_chars: usize,
         tail_delay_ms: u64,
+        tail_delete_delay_ms: u64,
     ) -> Self {
         Self {
             reading_display,
             tail_chars,
             tail_delay_ms,
+            tail_delete_delay_ms,
             ..self
         }
     }
@@ -160,6 +170,7 @@ impl PartLayer {
             && self.mode == PartMode::Part
             && composing(engine)
             && !engine.has_pending_romaji()
+            && self.deleted != Some(true)
     }
 
     pub fn with_skk_style(self, skk_style: bool) -> Self {
@@ -212,6 +223,10 @@ impl PartLayer {
         }
         if key.is_press && !key.keysym.is_modifier() {
             self.settled = false;
+            self.deleted = (key.keysym == Keysym::BACKSPACE
+                && self.mode == PartMode::Part
+                && self::composing(engine))
+            .then(|| deletes_a_lone_kana(engine));
         }
         let result = self.dispatch(engine, key);
         let mut result = plain_aux(engine, result);
@@ -295,7 +310,11 @@ impl PartLayer {
     /// When the frontend should call [`Self::refresh`]: after this long
     /// without a key, while a kana tail is held back.
     pub fn refresh_after_ms(&self, engine: &InputMethodEngine) -> Option<u64> {
-        self.holds_tail(engine).then_some(self.tail_delay_ms)
+        let delay = match self.deleted {
+            Some(_) => self.tail_delete_delay_ms,
+            None => self.tail_delay_ms,
+        };
+        self.holds_tail(engine).then_some(delay)
     }
 
     /// `ReadingDisplay::Ruby`: the last kanji run of the preedit — its span
@@ -1152,6 +1171,19 @@ fn with_kana_tail(reading: &str, surface: &str, n: usize) -> Option<String> {
     let head: String = surface.chars().take(surface_start).collect();
     let tail: String = r[reading_start..].iter().collect();
     Some(head + &tail)
+}
+
+/// Whether Backspace would take a kana that stands on its own in the
+/// preedit (the で of 規定で), not a piece of a kanji run's reading.
+fn deletes_a_lone_kana(engine: &InputMethodEngine) -> bool {
+    if engine.has_pending_romaji() {
+        return true;
+    }
+    let reading = engine.reading();
+    let Some(preedit) = engine.preedit() else {
+        return false;
+    };
+    align(&reading, preedit.text()).is_some_and(|units| units.last().is_some_and(|u| u.kana))
 }
 
 /// [`last_kanji`] of a live preedit, unfired romaji left out of both.

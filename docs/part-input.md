@@ -87,7 +87,7 @@ Space           → 「いい」を確定し、「天気」の候補窓が開く
 
 | 値 | 表示 |
 |---|---|
-| `"tail"`（既定） | 打った末尾の `tail_chars` 文字（既定 1）を平仮名のまま残す（漢字のかたまりの途中にかかるときは、そのかたまりごと）。子音だけを打った間（規定 + `d`）は変換を戻さない。`tail_delay_ms` ミリ秒（既定 250）手を止めると全体を変換して出す |
+| `"tail"`（既定） | 打った末尾の `tail_chars` 文字（既定 1）を平仮名のまま残す（漢字のかたまりの途中にかかるときは、そのかたまりごと）。子音だけを打った間（規定 + `d`）は変換を戻さない。`tail_delay_ms` ミリ秒（既定 250）手を止めると全体を変換して出す。Backspace で漢字にかからない平仮名を消したとき（規定で → 規定）は漢字のまま出し、漢字の読みを削ったときだけ平仮名で見せる。削除のあとの待ち時間は `tail_delete_delay_ms`（既定 600） |
 | `"ruby"` | 入力中の文字列の最後の漢字のかたまりの真上に、その読みを小さく出す。文字の位置を返さないアプリ（Chromium など）では、入力中の文字列の先頭として返った位置の上に出る |
 | `"inline"` | 最後の漢字のかたまりの読みを後ろに添える（今日はいい天気〈てんき〉）。添えた読みは確定されない |
 | `"none"` | 出さない |
@@ -144,7 +144,7 @@ scripts/skk2mozc.py --abbrev ~/Library/Application\ Support/AquaSKK/SKK-JISYO.L 
 
 | タブ | できること |
 |---|---|
-| 一般 | SKK 式の入力（`[conversion] skk_style`）、変換中の読み（`[display] reading_display` `tail_delay_ms`）、補完候補の表示（`[display] part_hint`）、予測候補（`[conversion] predictive`）、学習の有無（`[learning] enabled`）、日付・時刻の変換（`[date] enabled`） |
+| 一般 | SKK 式の入力（`[conversion] skk_style`）、変換中の読み（`[display] reading_display` `tail_delay_ms` `tail_delete_delay_ms`）、補完候補の表示（`[display] part_hint`）、予測候補（`[conversion] predictive`）、学習の有無（`[learning] enabled`）、日付・時刻の変換（`[date] enabled`） |
 | モデル | メイン / 軽量モデルの選択。組み合わせに名前を付けて保存・切替・削除（`[profiles.<名前>]`）。「計測する」で全モデルの精度・1回あたりの時間・読込時間をこの Mac で測る |
 | 辞書 | `user_dicts/` の TSV 辞書の一覧・検索・追加（`registered.tsv` へ）・削除。バイナリ辞書は名前だけ表示 |
 | 学習 | 学習履歴の一覧・検索・削除・すべてリセット |

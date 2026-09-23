@@ -11,6 +11,7 @@ final class SettingsModel: ObservableObject {
     @Published var candidateLayout = "vertical"
     @Published var readingDisplay = "tail"
     @Published var tailDelayMs = 250
+    @Published var tailDeleteDelayMs = 600
     @Published var predictive = false
     @Published var skkStyle = false
     @Published var model = ""
@@ -37,6 +38,7 @@ final class SettingsModel: ObservableObject {
         candidateLayout = config["candidate_layout"] as? String ?? candidateLayout
         readingDisplay = config["reading_display"] as? String ?? readingDisplay
         tailDelayMs = config["tail_delay_ms"] as? Int ?? tailDelayMs
+        tailDeleteDelayMs = config["tail_delete_delay_ms"] as? Int ?? tailDeleteDelayMs
         predictive = config["predictive"] as? Bool ?? predictive
         skkStyle = config["skk_style"] as? Bool ?? skkStyle
         model = config["model"] as? String ?? model
@@ -49,6 +51,7 @@ final class SettingsModel: ObservableObject {
         saved = [
             "display.part_hint": partHint, "display.candidate_layout": candidateLayout,
             "display.reading_display": readingDisplay, "display.tail_delay_ms": "\(tailDelayMs)",
+            "display.tail_delete_delay_ms": "\(tailDeleteDelayMs)",
             "conversion.predictive": "\(predictive)",
             "conversion.skk_style": "\(skkStyle)",
             "conversion.model": model, "conversion.light_model": lightModel,
@@ -298,6 +301,11 @@ struct GeneralTab: View {
                     in: 50...1000, step: 50
                 )
                 .onChange(of: model.tailDelayMs) { model.set("display", "tail_delay_ms", $0) }
+                Stepper(
+                    "削除のあと変換するまで: \(model.tailDeleteDelayMs) ミリ秒",
+                    value: $model.tailDeleteDelayMs, in: 50...2000, step: 50
+                )
+                .onChange(of: model.tailDeleteDelayMs) { model.set("display", "tail_delete_delay_ms", $0) }
             }
             Toggle(
                 "補完候補を表示する（Tab で補完）",

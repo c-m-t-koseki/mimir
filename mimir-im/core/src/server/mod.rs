@@ -59,6 +59,7 @@ impl ImServer {
                 settings.display.reading_display,
                 settings.display.tail_chars,
                 settings.display.tail_delay_ms,
+                settings.display.tail_delete_delay_ms,
             );
         part.attach(&mut engine);
         Self {
@@ -147,6 +148,7 @@ impl ImServer {
                     "candidate_layout": settings.display.candidate_layout,
                     "reading_display": settings.display.reading_display,
                     "tail_delay_ms": settings.display.tail_delay_ms,
+                    "tail_delete_delay_ms": settings.display.tail_delete_delay_ms,
                     "predictive": settings.conversion.predictive,
                     "skk_style": settings.conversion.skk_style,
                     "model": settings.conversion.model,
