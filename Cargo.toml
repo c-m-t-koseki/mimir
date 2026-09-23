@@ -1,5 +1,5 @@
 [workspace]
-members = ["mimir-engine", "mimir-cli", "mimir-im/core", "mimir-im/fcitx5"]
+members = ["mimir-engine", "mimir-cli", "mimir-im/core", "mimir-im/fcitx5", "mimir-im/windows"]
 resolver = "3"
 
 [workspace.package]
