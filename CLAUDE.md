@@ -182,9 +182,9 @@ Swift/InputMethodKit frontend. All IME state lives in karukan-imserver (spawned 
 
 ## macOS Input Mode Design
 
-`karukan-macos` registers **only the Japanese input mode** (`dev.togatoga.inputmethod.Karukan.Japanese`) in `Info.plist`. There is no Roman/英数 mode inside Karukan — if the user wants to type in Latin script they switch to the OS-level English input source (e.g. via Karabiner). Do not add a Roman mode back; it is intentionally absent.
+This fork registers **two input modes** in `Info.plist`: Japanese (`dev.togatoga.inputmethod.Karukan.Japanese`) and Roman (`dev.togatoga.inputmethod.Karukan.Roman`). They mirror the part layer's kana / ASCII modes (`karukan-im/core/src/core/part.rs`) so the menu bar icon shows which one is active: the frontend calls `selectMode` whenever `KeyResult.mode` changes, and `setValue(_:forTag:)` brings the engine along when macOS switches the mode (input menu). The JIS 英数 key is consumed and sent to the engine as `Eisu_toggle` (ASCII mode); かな is sent as `Super_R` (kana mode). Upstream Karukan registers only the Japanese mode and leaves Latin input to the OS English source; this fork keeps Latin input inside Karukan.
 
-The engine-internal `InputMode::Alphabet` (entered via Shift+letter on Linux/fcitx5) is a separate Rust engine concept unrelated to this macOS input mode registration. Do not conflate the two.
+The engine-internal `InputMode::Alphabet` (entered via Shift+letter on Linux/fcitx5) is a separate Rust engine concept, unused by the macOS part layer. Do not conflate the two.
 
 ## Key Design Patterns
 

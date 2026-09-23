@@ -174,21 +174,33 @@ impl PartLayer {
 
     fn dispatch(&mut self, engine: &mut InputMethodEngine, key: &KeyEvent) -> EngineResult {
         let m = key.modifiers;
+        // Mode keys first: かな arrives as Super_R, a modifier keysym, and
+        // must work from ASCII mode too, where every other key passes by.
+        if key.is_press {
+            // 英数: direct ASCII input, closing what is open (`l` does the same
+            // from kana input; かな / Ctrl+J come back).
+            if key.keysym == Keysym::EISU_TOGGLE {
+                let result = self.close(engine);
+                self.enter(engine, PartMode::Ascii);
+                return merge(EngineResult::consumed(), result);
+            }
+
+            // Ctrl+J / かな: back to kana from anywhere, closing an open part.
+            let ctrl_j = m.control_key && matches!(key.keysym, Keysym::KEY_J | Keysym::KEY_J_UPPER);
+            if ctrl_j || key.keysym.is_mode_toggle_key() {
+                let result = self.close(engine);
+                self.enter(engine, PartMode::Plain);
+                // Also leave the engine's own katakana mode (Ctrl+K).
+                engine.process_key(&press(Keysym::SUPER_R));
+                return merge(EngineResult::consumed(), result);
+            }
+        }
+
         if !key.is_press || key.keysym.is_modifier() || m.alt_key || m.super_key {
             return match self.mode {
                 PartMode::Ascii => EngineResult::not_consumed(),
                 _ => engine.process_key(key),
             };
-        }
-
-        // Ctrl+J / かな: back to kana from anywhere, closing an open part.
-        let ctrl_j = m.control_key && matches!(key.keysym, Keysym::KEY_J | Keysym::KEY_J_UPPER);
-        if ctrl_j || key.keysym.is_mode_toggle_key() {
-            let result = self.close(engine);
-            self.enter(engine, PartMode::Plain);
-            // Also leave the engine's own katakana mode (Ctrl+K).
-            engine.process_key(&press(Keysym::SUPER_R));
-            return merge(EngineResult::consumed(), result);
         }
 
         // No katakana mode: Ctrl+K is the application's (kill-line) unless
@@ -848,6 +860,24 @@ mod tests {
         engine_learning_on(&mut engine);
         feed(&mut layer, &mut engine, "Kaigi.Te ");
         assert!(!learned(&engine).iter().any(|(r, _)| r.ends_with('て')));
+    }
+
+    #[test]
+    fn eisu_and_kana_keys_switch_modes_inside_karukan() {
+        let (mut layer, mut engine) = setup();
+        feed(&mut layer, &mut engine, "Kai");
+        let result = layer.process_key(&mut engine, &press(Keysym::EISU_TOGGLE));
+        assert!(result.consumed);
+        assert!(matches!(result.actions.as_slice(), [EngineAction::Commit(t), ..] if t == "かい"));
+        assert_eq!(layer.mode(), PartMode::Ascii);
+        assert!(!layer.process_key(&mut engine, &press_char('a')).consumed);
+        // The macOS frontend sends かな as Super_R.
+        assert!(
+            layer
+                .process_key(&mut engine, &press(Keysym::SUPER_R))
+                .consumed
+        );
+        assert_eq!(layer.mode(), PartMode::Plain);
     }
 
     #[test]

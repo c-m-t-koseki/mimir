@@ -50,6 +50,8 @@ enum KeyCodeMap {
     static let eisuKeyCode: UInt16 = 102
     /// Right Command key (kVK_RightCommand), seen in flagsChanged events.
     static let rightCommandKeyCode: UInt16 = 54
+    /// XKB Eisu_toggle keysym — the engine's switch to ASCII input.
+    static let eisuKeysym: UInt32 = 0xff2f
     /// XKB Super_R keysym — the engine's katakana→hiragana toggle.
     static let superRKeysym: UInt32 = 0xffec
 

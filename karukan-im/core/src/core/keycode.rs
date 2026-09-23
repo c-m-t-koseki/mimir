@@ -46,6 +46,10 @@ impl Keysym {
     /// keyboards.
     pub const HENKAN: Keysym = Keysym(0xff23);
 
+    /// 英数 key (XK_Eisu_toggle), as the macOS frontend delivers the JIS
+    /// 英数 key: switches to direct ASCII input inside Karukan.
+    pub const EISU_TOGGLE: Keysym = Keysym(0xff2f);
+
     // Space
     pub const SPACE: Keysym = Keysym(0x0020);
 
