@@ -1,6 +1,8 @@
 # 漢字パート入力（macOS）
 
-macOS フロントエンドでは、変換する範囲（漢字パート）を自分で明示して入力する。範囲の外は平仮名のまま、打ったそばから確定する。SandS（Space を押したままの Shift）と一緒に使うことを前提にしている。
+macOS フロントエンドでは、変換する範囲（漢字パート）ごとに入力する。既定では打った文字はすべてパートに入ってライブ変換され、Space でパートを区切って確定する。
+
+SKK 式（`[conversion] skk_style = true`）では、パートを大文字で明示して開き、パートの外は平仮名のまま、打ったそばから確定する。SandS（Space を押したままの Shift）と一緒に使うことを前提にしている。次の例は SKK 式のもの:
 
 ```
 Honjitu no Kaigi ha  →  本日の会議は
@@ -33,6 +35,10 @@ Honjitu no Kaigi ha  →  本日の会議は
 | 操作 | キー |
 |---|---|
 | パートを開く | 大文字（Shift+文字） |
+
+既定では、小文字でもパートが開く。打った文字は常にライブ変換され、Space でパートを閉じたあとも、次の文字で新しいパートが開く。平仮名のまま確定したいときは、候補窓（Ctrl+N）で平仮名の候補を選ぶ。
+
+`[conversion] skk_style = true`（設定ウィンドウの「一般」の「SKK 式の入力」）にすると SKK 式になり、パートを開くのは大文字だけになる。小文字は平仮名のまま、打ったそばから確定する。以下の説明の「平仮名入力（パートの外）」は、この SKK 式でのことである。
 
 ### パート入力中
 
@@ -103,7 +109,7 @@ scripts/skk2mozc.py ~/Library/Application\ Support/AquaSKK/skk-jisyo.utf8 \
 
 | タブ | できること |
 |---|---|
-| 一般 | 変換中の補助表示（`[display] part_hint`）、予測候補（`[conversion] predictive`）、学習の有無（`[learning] enabled`）、日付・時刻の変換（`[date] enabled`） |
+| 一般 | SKK 式の入力（`[conversion] skk_style`）、変換中の補助表示（`[display] part_hint`）、予測候補（`[conversion] predictive`）、学習の有無（`[learning] enabled`）、日付・時刻の変換（`[date] enabled`） |
 | モデル | メイン / 軽量モデルの選択。組み合わせに名前を付けて保存・切替・削除（`[profiles.<名前>]`）。「計測する」で全モデルの精度・1回あたりの時間・読込時間をこの Mac で測る |
 | 辞書 | `user_dicts/` の TSV 辞書の一覧・検索・追加（`registered.tsv` へ）・削除。バイナリ辞書は名前だけ表示 |
 | 学習 | 学習履歴の一覧・検索・削除・すべてリセット |
