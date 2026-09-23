@@ -264,6 +264,35 @@ impl InputMethodEngine {
         self.metrics = ConversionMetrics::default();
     }
 
+    /// Turn live conversion on or off without the Ctrl+Shift+L re-render —
+    /// the part layer flips it at part boundaries, where the buffer is empty.
+    pub fn set_live_conversion(&mut self, enabled: bool) {
+        self.live.enabled = enabled;
+        self.live.shown = false;
+    }
+
+    /// True while an unfired romaji keystroke (`k`, `n`) is in the buffer.
+    pub fn has_pending_romaji(&self) -> bool {
+        !self.input_buf.pending().is_empty()
+    }
+
+    /// Commit the composition as typed kana, without touching the learning
+    /// cache: plain hiragana is not a conversion the user chose.
+    pub fn commit_plain_result(&mut self) -> EngineResult {
+        self.settle_romaji();
+        let text = self.input_buf.reading();
+        self.end_composition();
+        let action = if text.is_empty() {
+            EngineAction::UpdatePreedit(Preedit::new())
+        } else {
+            EngineAction::Commit(text)
+        };
+        EngineResult::consumed()
+            .with_action(action)
+            .with_action(EngineAction::HideCandidates)
+            .with_action(EngineAction::HideAuxText)
+    }
+
     /// Drop all composition-scoped state in one place: the input buffer, the
     /// live-conversion display flag, the chunks, and the manual chunk breaks.
     /// Every path that ends (or freshly starts) a composition goes through
