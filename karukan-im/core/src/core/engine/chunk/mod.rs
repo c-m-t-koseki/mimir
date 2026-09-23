@@ -36,7 +36,23 @@ impl InputMethodEngine {
         let text: Vec<char> = full_reading.chars().collect();
         let base_ctx = self.truncate_context_for_api();
 
-        let chunks = self.convert_chunks(&text, &base_ctx);
+        // What the user committed for this exact reading (best match for
+        // the current left context) beats the model: the learned surface is
+        // shown live, and committing it reinforces it. No inference runs.
+        let learned = match &self.learning {
+            Some(cache) if self.input_buf.pending().is_empty() => cache
+                .lookup_with_context(&full_reading, &base_ctx)
+                .into_iter()
+                .next(),
+            _ => None,
+        };
+        let chunks = match learned {
+            Some((surface, _)) => vec![ComposingChunk {
+                reading: full_reading.clone(),
+                converted: surface,
+            }],
+            None => self.convert_chunks(&text, &base_ctx),
+        };
         let combined: String = chunks.iter().map(|c| c.converted.as_str()).collect();
 
         self.chunks = chunks;
