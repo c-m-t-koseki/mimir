@@ -17,7 +17,8 @@ use crate::core::state::InputState;
 
 use protocol::{
     Action, CandidateItem, InitResult, KeyResult, PROTOCOL_VERSION, PreeditAttr, ProcessKeyParams,
-    Request, Response, RpcError, SelectCandidateParams, StatusResult, SurroundingTextParams,
+    Request, Response, RpcError, SelectCandidateParams, SetConfigParams, StatusResult,
+    SurroundingTextParams,
 };
 
 /// JSON-RPC dispatcher owning the engine instance.
@@ -123,6 +124,34 @@ impl ImServer {
                 let params: SurroundingTextParams = parse_params(params)?;
                 self.engine
                     .set_surrounding_text_at(&params.text, params.cursor_pos);
+                Ok(json!({}))
+            }
+            "get_config" => {
+                let settings = Settings::load_or_default();
+                Ok(json!({
+                    "part_hint": settings.display.part_hint,
+                    "predictive": settings.conversion.predictive,
+                    "model": settings.conversion.model,
+                    "light_model": settings.conversion.light_model,
+                    "learning": settings.learning.enabled,
+                    "models": settings.models.keys().collect::<Vec<_>>(),
+                }))
+            }
+            "set_config" => {
+                let params: SetConfigParams = parse_params(params)?;
+                let value = match params.value {
+                    Value::Bool(b) => toml::Value::Boolean(b),
+                    Value::String(s) => toml::Value::String(s),
+                    Value::Number(n) if n.is_i64() => toml::Value::Integer(n.as_i64().unwrap_or(0)),
+                    other => {
+                        return Err(RpcError::new(
+                            RpcError::INVALID_PARAMS,
+                            format!("unsupported value: {other}"),
+                        ));
+                    }
+                };
+                Settings::set_value(&params.section, &params.key, value)
+                    .map_err(|e| RpcError::new(RpcError::INVALID_PARAMS, format!("{e:#}")))?;
                 Ok(json!({}))
             }
             "save_learning" => {

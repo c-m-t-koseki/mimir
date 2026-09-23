@@ -131,6 +131,19 @@ class KarukanInputController: IMKInputController {
         }
     }
 
+    // MARK: - Input menu
+
+    override func menu() -> NSMenu! {
+        let menu = NSMenu()
+        menu.addItem(
+            NSMenuItem(title: "Karukan の設定…", action: #selector(openSettings(_:)), keyEquivalent: ""))
+        return menu
+    }
+
+    @objc func openSettings(_ sender: Any?) {
+        SettingsWindowController.shared.show()
+    }
+
     // MARK: - Lifecycle
 
     override func deactivateServer(_ sender: Any!) {
