@@ -49,7 +49,7 @@ impl ImServer {
     pub fn with_settings(settings: Settings) -> Self {
         let config = EngineConfig::from_settings(&settings);
         let mut engine = InputMethodEngine::with_config(config);
-        let mut part = PartLayer::new();
+        let mut part = PartLayer::with_hint(settings.display.part_hint);
         part.attach(&mut engine);
         Self {
             engine,
@@ -180,7 +180,7 @@ impl ImServer {
                 PartMode::Ascii => "ascii",
                 PartMode::Plain | PartMode::Part => "kana",
             },
-            reading: self.part.live_reading(&self.engine),
+            hint: self.part.hint(&self.engine),
         })
         .map_err(internal_error)
     }

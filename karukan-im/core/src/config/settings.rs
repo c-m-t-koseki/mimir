@@ -119,6 +119,20 @@ pub enum CandidateWindow {
     Conversion,
 }
 
+/// What the small panel under a kanji part shows while it is typed.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PartHint {
+    /// Earlier-committed words starting with the typed reading (Tab
+    /// completes to them).
+    #[default]
+    Completion,
+    /// The kana under the live conversion.
+    Reading,
+    /// Nothing.
+    None,
+}
+
 /// Aux-line settings
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DisplaySettings {
@@ -129,6 +143,8 @@ pub struct DisplaySettings {
     /// When the candidate window opens: while typing too, or only once
     /// Space starts a conversion.
     pub candidate_window: CandidateWindow,
+    /// What the panel under a kanji part shows (macOS part input)
+    pub part_hint: PartHint,
 }
 
 /// Conversion strategy mode

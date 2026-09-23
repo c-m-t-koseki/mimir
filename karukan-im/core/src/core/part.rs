@@ -20,6 +20,10 @@ use super::keycode::{KeyEvent, KeyModifiers, Keysym};
 use super::preedit::Preedit;
 use super::state::InputState;
 use crate::config::Settings;
+use crate::config::settings::PartHint;
+
+/// Completions listed in the hint panel.
+const HINT_COMPLETIONS: usize = 3;
 
 /// Keys that pick a candidate from the open window, in page order.
 pub const SELECT_KEYS: &str = "asdfjkl";
@@ -36,6 +40,8 @@ pub enum PartMode {
 
 pub struct PartLayer {
     mode: PartMode,
+    /// What [`Self::hint`] reports while a part is typed.
+    hint: PartHint,
     /// Word registration in progress: the reading and the word so far.
     register: Option<Registration>,
 }
@@ -69,7 +75,15 @@ impl PartLayer {
     pub fn new() -> Self {
         Self {
             mode: PartMode::Plain,
+            hint: PartHint::default(),
             register: None,
+        }
+    }
+
+    pub fn with_hint(hint: PartHint) -> Self {
+        Self {
+            hint,
+            ..Self::new()
         }
     }
 
@@ -129,15 +143,25 @@ impl PartLayer {
             .with_action(EngineAction::HideAuxText)
     }
 
-    /// The kana under the live conversion, for the frontend to show beside
-    /// it; `None` outside a part or when the preedit already is that kana.
-    pub fn live_reading(&self, engine: &InputMethodEngine) -> Option<String> {
+    /// Text for the small panel under an open part (`[display] part_hint`):
+    /// earlier-committed words the reading completes to, or the kana under
+    /// the live conversion when it differs from the preedit.
+    pub fn hint(&self, engine: &InputMethodEngine) -> Option<String> {
         if self.mode != PartMode::Part || self.register.is_some() {
             return None;
         }
-        let kana = engine.composing_kana()?;
-        let shown = engine.preedit().map(|p| p.text().to_string());
-        (shown.as_deref() != Some(kana.as_str())).then_some(kana)
+        match self.hint {
+            PartHint::None => None,
+            PartHint::Completion => {
+                let words = engine.completions(HINT_COMPLETIONS);
+                (!words.is_empty()).then(|| words.join("  "))
+            }
+            PartHint::Reading => {
+                let kana = engine.composing_kana()?;
+                let shown = engine.preedit().map(|p| p.text().to_string());
+                (shown.as_deref() != Some(kana.as_str())).then_some(kana)
+            }
+        }
     }
 
     fn dispatch(&mut self, engine: &mut InputMethodEngine, key: &KeyEvent) -> EngineResult {
@@ -196,7 +220,10 @@ impl PartLayer {
     fn close(&mut self, engine: &mut InputMethodEngine) -> EngineResult {
         match (self.mode, engine.state()) {
             (_, InputState::Empty) => EngineResult::consumed(),
-            (PartMode::Part, _) => engine.commit_result(),
+            (PartMode::Part, _) => {
+                engine.settle_pending();
+                engine.commit_result()
+            }
             _ => engine.commit_plain_result(),
         }
     }
@@ -707,7 +734,8 @@ mod tests {
         assert_eq!(aux, ["かいぎ"]);
         // No model: the preedit is the kana itself, nothing to show beside it.
         layer.process_key(&mut engine, &ctrl('g'));
-        assert_eq!(layer.live_reading(&engine), None);
+        layer.hint = PartHint::Reading;
+        assert_eq!(layer.hint(&engine), None);
     }
 
     #[test]
