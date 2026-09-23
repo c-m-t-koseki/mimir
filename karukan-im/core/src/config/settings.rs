@@ -241,6 +241,8 @@ pub struct LearningSettings {
     /// cache; longer conversion results (e.g. whole live-converted
     /// sentences) are not learned
     pub max_surface_chars: usize,
+    /// Minimum surface length recorded (2 skips lone て / 中)
+    pub min_surface_chars: usize,
 }
 
 impl Default for Settings {

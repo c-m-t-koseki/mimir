@@ -134,7 +134,7 @@ class KarukanInputController: IMKInputController {
     // MARK: - Input menu
 
     override func menu() -> NSMenu! {
-        let menu = NSMenu()
+        let menu = NSMenu(title: "Karukan")
         menu.addItem(
             NSMenuItem(title: "Karukan の設定…", action: #selector(openSettings(_:)), keyEquivalent: ""))
         return menu

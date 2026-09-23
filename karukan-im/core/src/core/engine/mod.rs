@@ -358,6 +358,49 @@ impl InputMethodEngine {
         self.record_learning(reading, surface);
     }
 
+    /// [`Self::learn`] for a word whose start, `skip_tail`, is already
+    /// committed — and so already at the end of the left context, which is
+    /// therefore recorded without it.
+    pub fn learn_after(&mut self, reading: &str, surface: &str, skip_tail: &str) {
+        let lctx = self.truncate_context_for_api();
+        let lctx = lctx.strip_suffix(skip_tail).unwrap_or(&lctx).to_string();
+        if self.mode.current() != InputMode::Emoji
+            && let Some(cache) = &mut self.learning
+        {
+            cache.record_with_context(reading, surface, &lctx);
+        }
+    }
+
+    #[cfg(test)]
+    pub fn enable_learning_for_test(&mut self) {
+        self.learning = Some(LearningCache::new(LearningConfig {
+            min_surface_chars: 2,
+            ..Default::default()
+        }));
+    }
+
+    /// What committing the composition would produce, `(reading, text)`,
+    /// without committing it (the part layer decides what to learn first).
+    pub fn composing_commit_preview(&mut self) -> Option<(String, String)> {
+        matches!(self.state, InputState::Composing { .. }).then(|| self.resolve_composing_commit())
+    }
+
+    /// Commit the composition like [`Self::commit_result`], learning nothing.
+    pub fn commit_unlearned_result(&mut self) -> EngineResult {
+        let (_, text) = self.resolve_composing_commit();
+        self.end_composition();
+        self.surrounding_context = None;
+        let action = if text.is_empty() {
+            EngineAction::UpdatePreedit(Preedit::new())
+        } else {
+            EngineAction::Commit(text)
+        };
+        EngineResult::consumed()
+            .with_action(action)
+            .with_action(EngineAction::HideCandidates)
+            .with_action(EngineAction::HideAuxText)
+    }
+
     /// Drop all composition-scoped state in one place: the input buffer, the
     /// live-conversion display flag, the chunks, and the manual chunk breaks.
     /// Every path that ends (or freshly starts) a composition goes through
