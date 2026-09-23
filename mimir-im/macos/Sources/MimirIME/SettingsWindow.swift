@@ -352,42 +352,185 @@ struct GeneralTab: View {
     }
 }
 
-/// `[keys]`: each action's keys, edited as text and saved on Return. A
-/// binding that doesn't parse is refused (and the old one shown again).
+/// Captures the next key presses in the settings window while armed,
+/// turning each into the `[keys]` notation (C-n, S-Tab, Space, q).
+final class KeyRecorder: ObservableObject {
+    /// The action being recorded, `nil` when idle.
+    @Published private(set) var action: String?
+    /// Keys taken so far (the select keys take several).
+    @Published private(set) var taken: [String] = []
+    private var monitor: Any?
+    private var wanted = 1
+    private var done: (([String]) -> Void)?
+
+    /// Take `count` keys for `action`, then hand them to `done`.
+    func record(_ action: String, count: Int = 1, done: @escaping ([String]) -> Void) {
+        stop()
+        self.action = action
+        wanted = count
+        self.done = done
+        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self, let spec = Self.spec(event, charactersOnly: count > 1) else { return nil }
+            self.taken.append(spec)
+            if self.taken.count >= self.wanted {
+                let keys = self.taken
+                let done = self.done
+                self.stop()
+                done?(keys)
+            }
+            return nil
+        }
+    }
+
+    func stop() {
+        if let monitor { NSEvent.removeMonitor(monitor) }
+        monitor = nil
+        action = nil
+        taken = []
+        done = nil
+    }
+
+    private static let named: [UInt16: String] = [
+        49: "Space", 48: "Tab", 36: "Return", 76: "Return", 53: "Escape", 51: "BackSpace",
+        117: "Delete", 123: "Left", 124: "Right", 125: "Down", 126: "Up", 115: "Home",
+        119: "End", 116: "PageUp", 121: "PageDown",
+    ]
+
+    /// `event` in the `[keys]` notation; `nil` for what can't be bound
+    /// (⌘/⌥ chords, dead keys) — or, `charactersOnly`, anything but a plain
+    /// character.
+    static func spec(_ event: NSEvent, charactersOnly: Bool) -> String? {
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        if flags.contains(.command) || flags.contains(.option) { return nil }
+        let ctrl = flags.contains(.control)
+        let shift = flags.contains(.shift)
+        if let name = named[event.keyCode] {
+            if charactersOnly { return nil }
+            return (ctrl ? "C-" : "") + (shift ? "S-" : "") + name
+        }
+        guard let chars = event.charactersIgnoringModifiers, chars.count == 1,
+            let c = chars.first, c.isASCII, !c.isWhitespace
+        else { return nil }
+        if charactersOnly { return ctrl ? nil : String(c) }
+        // A letter with Shift is S-a; other characters carry their shift
+        // (? rather than S-/).
+        if c.isLetter {
+            return (ctrl ? "C-" : "") + (shift ? "S-" : "") + c.lowercased()
+        }
+        return (ctrl ? "C-" : "") + String(c)
+    }
+}
+
+/// `[keys]`: each action's keys as chips; × drops one, ＋ records the next
+/// key pressed. The select keys are recorded afresh, eight in a row. A
+/// binding the engine refuses shows the old one again.
 struct KeysTab: View {
     @ObservedObject var model: SettingsModel
+    @StateObject private var recorder = KeyRecorder()
 
     private static let actions: [(String, String)] = [
         ("convert", "候補窓を開く"), ("next", "次の候補"), ("prev", "前の候補"),
-        ("select", "候補を選ぶキー（8文字）"), ("close", "パートを閉じて確定"), ("commit", "すべて確定"),
-        ("cancel", "取り消す"), ("katakana", "カタカナで確定"), ("complete", "以前の入力で補完"),
+        ("close", "パートを閉じて確定"), ("commit", "すべて確定"), ("cancel", "取り消す"),
+        ("katakana", "カタカナで確定"), ("complete", "以前の入力で補完"),
         ("left", "変換範囲を縮める"), ("right", "変換範囲を伸ばす"), ("home", "先頭の1文字だけ"),
         ("end", "全体"), ("register", "単語登録"), ("discard", "入力を捨てる"),
         ("kana", "かな入力へ"), ("ascii", "英数（直接入力）へ"), ("abbrev", "英字のまま変換"),
     ]
 
+    private func keys(_ action: String) -> [String] {
+        (model.keys[action] ?? "").split(separator: " ").map(String.init)
+    }
+
+    private func save(_ action: String, _ keys: [String]) {
+        let value = keys.joined(separator: " ")
+        model.keys[action] = value
+        if !model.set("keys", action, value) {
+            model.load()
+        }
+    }
+
     var body: some View {
         Form {
             Section {
+                HStack {
+                    Text("候補を選ぶキー")
+                    Spacer()
+                    if recorder.action == "select" {
+                        Text("キーを8つ順に押す… \(recorder.taken.joined())").foregroundStyle(.secondary)
+                        Button("やめる") { recorder.stop() }
+                    } else {
+                        Text(model.keys["select"] ?? "").font(.system(.body, design: .monospaced))
+                        Button("記録し直す") {
+                            recorder.record("select", count: 8) { save("select", [$0.joined()]) }
+                        }
+                    }
+                }
+            }
+            Section {
                 ForEach(Self.actions, id: \.0) { action, label in
-                    TextField(
-                        label,
-                        text: Binding(
-                            get: { model.keys[action] ?? "" },
-                            set: { model.keys[action] = $0 })
-                    )
-                    .onSubmit {
-                        if !model.set("keys", action, model.keys[action] ?? "") {
-                            model.load()
+                    HStack {
+                        Text(label)
+                        Spacer()
+                        ForEach(keys(action), id: \.self) { key in
+                            KeyChip(key: key) { save(action, keys(action).filter { $0 != key }) }
+                        }
+                        if recorder.action == action {
+                            Text("キーを押す…").foregroundStyle(.secondary)
+                            Button("やめる") { recorder.stop() }
+                        } else {
+                            Button {
+                                recorder.record(action) { taken in
+                                    save(action, keys(action).filter { !taken.contains($0) } + taken)
+                                }
+                            } label: {
+                                Image(systemName: "plus")
+                            }
+                            .buttonStyle(.borderless)
                         }
                     }
                 }
             } footer: {
-                Text("Emacs 式: C-n（Ctrl+N）、S-Tab（Shift+Tab）、Space Return Escape Tab Left Right Home End など、または1文字。空白で区切って複数。Return で保存。")
+                Text("＋ を押してから、割り当てたいキーを押す。× で外す。")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
+        .onDisappear { recorder.stop() }
+    }
+}
+
+/// One bound key, shown the way the keyboard names it, with × to drop it.
+struct KeyChip: View {
+    let key: String
+    let remove: () -> Void
+
+    /// C-n → ⌃N, S-Tab → ⇧Tab.
+    private var shown: String {
+        var rest = Substring(key)
+        var prefix = ""
+        while true {
+            if rest.hasPrefix("C-"), rest.count > 2 { prefix += "⌃"; rest = rest.dropFirst(2) }
+            else if rest.hasPrefix("S-"), rest.count > 2 { prefix += "⇧"; rest = rest.dropFirst(2) }
+            else { break }
+        }
+        let names = [
+            "Space": "Space", "Return": "↩", "Escape": "Esc", "Tab": "⇥", "BackSpace": "⌫",
+            "Delete": "⌦", "Left": "←", "Right": "→", "Up": "↑", "Down": "↓", "Home": "Home",
+            "End": "End", "PageUp": "PgUp", "PageDown": "PgDn",
+        ]
+        let name = names[String(rest)] ?? (rest.count == 1 ? rest.uppercased() : String(rest))
+        return prefix + name
+    }
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Text(shown).font(.system(.callout, design: .monospaced))
+            Button(action: remove) { Image(systemName: "xmark").font(.caption2) }
+                .buttonStyle(.borderless)
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 2)
+        .overlay(RoundedRectangle(cornerRadius: 2).stroke(Color.secondary.opacity(0.4)))
     }
 }
 
