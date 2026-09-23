@@ -37,9 +37,10 @@ pub enum Width {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Group {
     /// 。、「」・ — the symbols with no ASCII form, only a half-width
-    /// katakana one (`｡､｢｣･`)
+    /// katakana one (`｡､｢｣･`) — and ？！, which end a Japanese sentence
+    /// as 。 does and are wanted at its width
     KanaSymbol,
-    /// Every ASCII symbol and its full-width twin: `?!` `,.` `(){}[]`
+    /// Every other ASCII symbol and its full-width twin: `,.` `(){}[]`
     /// `<>=+-/*` `"'` `:;` `~` `#%&@$^_|` `` ` `` `\`
     AsciiSymbol,
     /// 0-9
@@ -60,6 +61,8 @@ const PAIRS: &[(Group, char, char)] = &[
     (Group::KanaSymbol,  '｢', '「'),
     (Group::KanaSymbol,  '｣', '」'),
     (Group::KanaSymbol,  '･', '・'),
+    (Group::KanaSymbol,  '?', '？'),
+    (Group::KanaSymbol,  '!', '！'),
     (Group::AsciiSymbol, '~', '〜'),
 ];
 
@@ -240,14 +243,18 @@ mod tests {
             ascii_symbol: Width::Half,
             ..WidthRules::default()
         };
-        assert_eq!(symbols_only.apply_str("。、「」・？"), "。、「」・?");
+        // ？！ end a sentence like 。 and stay with it; （） do not.
+        assert_eq!(
+            symbols_only.apply_str("。、「」・？！（）"),
+            "。、「」・？！()"
+        );
         // Asking for them explicitly still gives the half-width katakana
-        // forms.
+        // forms (and ASCII ?!).
         let marks_too = WidthRules {
             kana_symbol: Width::Half,
             ..symbols_only
         };
-        assert_eq!(marks_too.apply_str("。、「」・？"), "｡､｢｣･?");
+        assert_eq!(marks_too.apply_str("。、「」・？！"), "｡､｢｣･?!");
     }
 
     #[test]

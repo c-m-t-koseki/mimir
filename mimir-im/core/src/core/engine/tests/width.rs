@@ -81,15 +81,24 @@ fn type_keys(engine: &mut InputMethodEngine, keys: &str) -> EngineResult {
 #[test]
 fn typed_symbols_come_out_at_the_configured_width() {
     // Both what a rule produced (？！) and what passed through (`(` has no
-    // romaji rule) settle by the same rules.
+    // romaji rule) settle by the same rules. ？！ go with 。、, not with
+    // the ASCII symbols.
     let mut engine = engine_with_width(WidthRules {
-        ascii_symbol: Width::Half,
+        kana_symbol: Width::Half,
+        ascii_symbol: Width::Full,
         ..WidthRules::default()
     });
     let result = type_keys(&mut engine, "a?b!");
     assert_eq!(shown_preedit(&result).as_deref(), Some("あ?b!"));
     let result = engine.process_key(&press_key(Keysym::RETURN));
     assert_eq!(committed(&result).as_deref(), Some("あ?b!"));
+
+    let mut engine = engine_with_width(WidthRules {
+        ascii_symbol: Width::Half,
+        ..WidthRules::default()
+    });
+    let result = type_keys(&mut engine, "(a?)");
+    assert_eq!(shown_preedit(&result).as_deref(), Some("(あ？)"));
 
     let mut engine = engine_with_width(WidthRules {
         ascii_symbol: Width::Full,

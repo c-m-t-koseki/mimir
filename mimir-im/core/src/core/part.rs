@@ -442,7 +442,7 @@ impl PartLayer {
         if ch == 'q' && !matches!(engine.state(), InputState::Empty) {
             return self.commit_katakana(engine);
         }
-        if ch == ',' || ch == '.' {
+        if matches!(ch, ',' | '.' | '?' | '!') {
             let result = self.close(engine);
             self.enter(engine, PartMode::Plain);
             return merge(result, self.plain_key(engine, key));
