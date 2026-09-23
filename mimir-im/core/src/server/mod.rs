@@ -148,6 +148,7 @@ impl ImServer {
                 Ok(json!({
                     "part_hint": settings.display.part_hint,
                     "candidate_layout": settings.display.candidate_layout,
+                    "candidate_window": settings.display.candidate_window,
                     "reading_display": settings.display.reading_display,
                     "tail_delay_ms": settings.display.tail_delay_ms,
                     "tail_delete_delay_ms": settings.display.tail_delete_delay_ms,
