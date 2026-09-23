@@ -364,6 +364,7 @@ pub fn build_rules(style: SymbolStyle) -> TrieNode {
     trie.insert("zk", "↑");
     trie.insert("zl", "→");
     trie.insert("z-", "〜");
+    trie.insert("z ", "\u{3000}");
     trie.insert("z[", "『");
     trie.insert("z]", "』");
 
@@ -557,6 +558,7 @@ mod tests {
         assert_eq!(trie.search_longest("zk").output.unwrap(), "↑");
         assert_eq!(trie.search_longest("zl").output.unwrap(), "→");
         assert_eq!(trie.search_longest("z-").output.unwrap(), "〜");
+        assert_eq!(trie.search_longest("z ").output.unwrap(), "\u{3000}");
         assert_eq!(trie.search_longest("z[").output.unwrap(), "『");
         assert_eq!(trie.search_longest("z]").output.unwrap(), "』");
     }

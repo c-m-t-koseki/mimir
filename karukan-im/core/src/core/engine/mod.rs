@@ -276,6 +276,17 @@ impl InputMethodEngine {
         !self.input_buf.pending().is_empty()
     }
 
+    /// The romaji typed but not yet fired (`z` before `zl` → →).
+    pub fn pending_romaji(&self) -> String {
+        self.input_buf.pending()
+    }
+
+    /// Feed `ch` to the romaji converter even where it is a command key
+    /// (Space, …): it completes a pending sequence (`z` + Space → 　).
+    pub fn feed_romaji(&mut self, ch: char) -> EngineResult {
+        self.input_char(ch)
+    }
+
     /// Commit the composition as typed kana, without touching the learning
     /// cache: plain hiragana is not a conversion the user chose.
     pub fn commit_plain_result(&mut self) -> EngineResult {
