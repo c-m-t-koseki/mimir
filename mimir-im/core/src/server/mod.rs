@@ -50,7 +50,8 @@ impl ImServer {
     pub fn with_settings(settings: Settings) -> Self {
         let config = EngineConfig::from_settings(&settings);
         let mut engine = InputMethodEngine::with_config(config);
-        let mut part = PartLayer::with_hint(settings.display.part_hint);
+        let mut part = PartLayer::with_hint(settings.display.part_hint)
+            .with_skk_style(settings.conversion.skk_style);
         part.attach(&mut engine);
         Self {
             engine,
@@ -131,6 +132,7 @@ impl ImServer {
                 Ok(json!({
                     "part_hint": settings.display.part_hint,
                     "predictive": settings.conversion.predictive,
+                    "skk_style": settings.conversion.skk_style,
                     "model": settings.conversion.model,
                     "light_model": settings.conversion.light_model,
                     "learning": settings.learning.enabled,
