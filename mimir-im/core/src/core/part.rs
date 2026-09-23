@@ -1215,9 +1215,9 @@ fn composing(engine: &InputMethodEngine) -> bool {
 
 /// The reading held right of the caret, shown after the converted left
 /// side. The left side, what converts, is highlighted (a thick underline)
-/// and the rest gets a plain one: many applications (Chromium, terminals)
-/// draw the caret at the end of the preedit whatever it is told, so the
-/// boundary must show without it. The caret is still put there.
+/// and the rest gets a plain one: some applications draw the caret at the
+/// end of the preedit whatever they are told, so the boundary must show
+/// without it. The caret is still put there.
 fn show_split(tail: &str, result: &mut EngineResult) {
     for action in &mut result.actions {
         if let EngineAction::UpdatePreedit(preedit) = action
