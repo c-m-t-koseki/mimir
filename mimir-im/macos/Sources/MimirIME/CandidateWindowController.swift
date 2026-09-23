@@ -164,6 +164,9 @@ class CandidateWindowController {
         let totalPages: Int
     }
     private var pageState: PageState?
+    /// Label the rows with the select keys (off once the selection was
+    /// stepped with Ctrl+N/P, when the keys type on instead).
+    var showsKeys = true
 
     init() {
         panel = Swiss.panel()
@@ -225,7 +228,7 @@ class CandidateWindowController {
         listView.page = state.totalPages > 1 ? "\(state.page + 1) / \(state.totalPages)" : nil
         listView.rows = state.candidates.enumerated().map { index, candidate in
             CandidateListView.Row(
-                key: index < Self.selectKeys.count ? String(Self.selectKeys[index]) : "",
+                key: showsKeys && index < Self.selectKeys.count ? String(Self.selectKeys[index]) : "",
                 text: candidate.text,
                 note: candidate.description,
                 selected: index == state.cursor)

@@ -115,6 +115,12 @@ impl PartLayer {
         Self { skk_style, ..self }
     }
 
+    /// Whether a–l pick from the candidate window (not after its selection
+    /// was stepped): the frontend labels the rows only then.
+    pub fn picks_by_letter(&self) -> bool {
+        !self.stepped
+    }
+
     pub fn mode(&self) -> PartMode {
         self.mode
     }
@@ -939,7 +945,9 @@ mod tests {
         let (mut layer, mut engine) = setup();
         feed(&mut layer, &mut engine, "Kaigi");
         layer.process_key(&mut engine, &ctrl('n'));
+        assert!(layer.picks_by_letter());
         layer.process_key(&mut engine, &ctrl('n'));
+        assert!(!layer.picks_by_letter());
         // `a` commits the selection (the second candidate, カイギ without
         // a model) and types on.
         assert_eq!(feed(&mut layer, &mut engine, "a"), "カイギあ");
