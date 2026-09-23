@@ -76,7 +76,7 @@ final class SettingsModel: ObservableObject {
         let text = value.map { "\($0)" }
         guard saved[id] != text else { return true }
         let params: [String: Any] = ["section": section, "key": key, "value": value ?? NSNull()]
-        guard engineClient.sendRequestSync(method: "set_config", params: params, timeout: 2) != nil
+        guard let data = engineClient.sendRequestSync(method: "set_config", params: params, timeout: 2)
         else {
             error = "[\(section)] \(key) を保存できませんでした"
             load()
@@ -84,7 +84,12 @@ final class SettingsModel: ObservableObject {
         }
         saved[id] = text
         error = nil
-        EngineRestart.schedule()
+        // Keys and display settings apply at once; the rest (models,
+        // dictionaries, learning) take an engine restart.
+        let reply = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        if reply?["restart"] as? Bool ?? true {
+            EngineRestart.schedule()
+        }
         return true
     }
 
