@@ -31,7 +31,7 @@ use super::keycode::{KeyEvent, KeyModifiers, Keysym};
 use super::preedit::{AttributeType, Preedit, PreeditAttribute};
 use super::state::InputState;
 use crate::config::Settings;
-use crate::config::settings::PartHint;
+use crate::config::settings::{PartHint, ReadingDisplay};
 
 /// Longest committed text a one-char part is joined to for learning.
 const RECENT_MAX_CHARS: usize = 12;
@@ -67,6 +67,20 @@ pub struct PartLayer {
     /// The candidate window's selection was moved (Ctrl+N/P): a–l then
     /// type on instead of picking.
     stepped: bool,
+    /// How the reading under the live conversion shows.
+    reading_display: ReadingDisplay,
+    /// `ReadingDisplay::Tail`: typed chars that stay kana.
+    tail_chars: usize,
+    /// `ReadingDisplay::Tail`: the pause before they convert too.
+    tail_delay_ms: u64,
+    /// The pause after a deletion.
+    tail_delete_delay_ms: u64,
+    /// The last key deleted from the part: `Some(true)` when what it took
+    /// was a kana standing on its own, leaving the conversion untouched
+    /// (規定で → 規定), `Some(false)` when it cut into a kanji run.
+    deleted: Option<bool>,
+    /// Typing paused (`refresh`): the tail shows converted too.
+    settled: bool,
     /// SKK style: only a capital opens a part. The layer's own default
     /// (its tests are written for it); `[conversion] skk_style` sets it.
     skk_style: bool,
@@ -112,6 +126,12 @@ impl PartLayer {
             abbrev: false,
             split: None,
             stepped: false,
+            reading_display: ReadingDisplay::None,
+            tail_chars: 1,
+            tail_delay_ms: 250,
+            tail_delete_delay_ms: 600,
+            deleted: None,
+            settled: false,
             register: None,
             recent: None,
         }
@@ -122,6 +142,35 @@ impl PartLayer {
             hint,
             ..Self::new()
         }
+    }
+
+    pub fn with_reading_display(
+        self,
+        reading_display: ReadingDisplay,
+        tail_chars: usize,
+        tail_delay_ms: u64,
+        tail_delete_delay_ms: u64,
+    ) -> Self {
+        Self {
+            reading_display,
+            tail_chars,
+            tail_delay_ms,
+            tail_delete_delay_ms,
+            ..self
+        }
+    }
+
+    /// Whether the preedit holds its typed tail back in kana now: only
+    /// right after a kana fired — an unfired consonant (規定 + d) keeps the
+    /// conversion as it was.
+    fn holds_tail(&self, engine: &InputMethodEngine) -> bool {
+        self.reading_display == ReadingDisplay::Tail
+            && !self.settled
+            && self.split.is_none()
+            && self.mode == PartMode::Part
+            && composing(engine)
+            && !engine.has_pending_romaji()
+            && self.deleted != Some(true)
     }
 
     pub fn with_skk_style(self, skk_style: bool) -> Self {
@@ -172,14 +221,16 @@ impl PartLayer {
         if composing && ctrl && matches!(key.keysym, Keysym::KEY_U | Keysym::KEY_U_UPPER) {
             return self.discard(engine);
         }
+        if key.is_press && !key.keysym.is_modifier() {
+            self.settled = false;
+            self.deleted = (key.keysym == Keysym::BACKSPACE
+                && self.mode == PartMode::Part
+                && self::composing(engine))
+            .then(|| deletes_a_lone_kana(engine));
+        }
         let result = self.dispatch(engine, key);
         let mut result = plain_aux(engine, result);
-        if self.abbrev {
-            mark_abbrev(engine, &mut result);
-        }
-        if let Some(tail) = &self.split {
-            show_split(tail, &mut result);
-        }
+        self.decorate(engine, &mut result);
         // A Ctrl chord the engine leaves unbound must not reach the
         // application mid-composition: its text edit (Ctrl+K, Ctrl+W, …)
         // would act on the marked text behind the engine's back, and the
@@ -188,6 +239,95 @@ impl PartLayer {
             result.consumed = true;
         }
         result
+    }
+
+    /// Everything the layer adds to the engine's preedit: ▽ for abbrev
+    /// input, the reading held right of the caret, and the reading of the
+    /// live conversion (`[display] reading_display`).
+    fn decorate(&self, engine: &InputMethodEngine, result: &mut EngineResult) {
+        if self.abbrev {
+            mark_abbrev(engine, result);
+            return;
+        }
+        let live = self.mode == PartMode::Part && composing(engine);
+        if self.holds_tail(engine) {
+            let reading = engine.reading();
+            for action in &mut result.actions {
+                if let EngineAction::UpdatePreedit(preedit) = action
+                    && let Some(shown) =
+                        kana_tail_preedit(&reading, preedit.text(), self.tail_chars)
+                {
+                    *preedit = shown;
+                }
+            }
+        }
+        if let Some(tail) = &self.split {
+            show_split(tail, result);
+        }
+        if live && self.reading_display == ReadingDisplay::Inline {
+            let reading = engine.reading();
+            let head = engine
+                .preedit()
+                .map(|p| p.text().to_string())
+                .unwrap_or_default();
+            if let Some((_, _, kana)) = inline_kanji(&reading, &head) {
+                for action in &mut result.actions {
+                    if let EngineAction::UpdatePreedit(preedit) = action
+                        && !preedit.is_empty()
+                    {
+                        let mut shown = Preedit::with_text(format!("{}〈{kana}〉", preedit.text()));
+                        shown.set_caret(preedit.caret());
+                        let mut attributes = preedit.attributes().to_vec();
+                        let end = shown.text().chars().count();
+                        attributes.push(PreeditAttribute::new(
+                            preedit.text().chars().count(),
+                            end,
+                            AttributeType::Underline,
+                        ));
+                        shown.set_attributes(attributes);
+                        *preedit = shown;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Typing paused: redraw the preedit with nothing held back in kana.
+    pub fn refresh(&mut self, engine: &InputMethodEngine) -> EngineResult {
+        self.settled = true;
+        let Some(preedit) = engine
+            .preedit()
+            .filter(|_| self.mode == PartMode::Part && composing(engine))
+        else {
+            return EngineResult::consumed();
+        };
+        let mut result =
+            EngineResult::consumed().with_action(EngineAction::UpdatePreedit(preedit.clone()));
+        self.decorate(engine, &mut result);
+        result
+    }
+
+    /// When the frontend should call [`Self::refresh`]: after this long
+    /// without a key, while a kana tail is held back.
+    pub fn refresh_after_ms(&self, engine: &InputMethodEngine) -> Option<u64> {
+        let delay = match self.deleted {
+            Some(_) => self.tail_delete_delay_ms,
+            None => self.tail_delay_ms,
+        };
+        self.holds_tail(engine).then_some(delay)
+    }
+
+    /// `ReadingDisplay::Ruby`: the last kanji run of the preedit — its span
+    /// (chars) and reading — for the frontend to set the reading above.
+    pub fn ruby(&self, engine: &InputMethodEngine) -> Option<(usize, usize, String)> {
+        if self.reading_display != ReadingDisplay::Ruby
+            || self.mode != PartMode::Part
+            || !composing(engine)
+        {
+            return None;
+        }
+        let head = engine.preedit()?.text().to_string();
+        inline_kanji(&engine.reading(), &head)
     }
 
     /// Ctrl+U: drop what is being composed (readline's kill-line), part
@@ -204,8 +344,7 @@ impl PartLayer {
     }
 
     /// Text for the small panel under an open part (`[display] part_hint`):
-    /// earlier-committed words the reading completes to, or the kana under
-    /// the live conversion when it differs from the preedit.
+    /// earlier-committed words the reading completes to.
     pub fn hint(&self, engine: &InputMethodEngine) -> Option<String> {
         if self.mode != PartMode::Part || self.register.is_some() {
             return None;
@@ -215,11 +354,6 @@ impl PartLayer {
             PartHint::Completion => {
                 let words = engine.completions(HINT_COMPLETIONS);
                 (!words.is_empty()).then(|| words.join("  "))
-            }
-            PartHint::Reading => {
-                let kana = engine.composing_kana()?;
-                let shown = engine.preedit().map(|p| p.text().to_string());
-                (shown.as_deref() != Some(kana.as_str())).then_some(kana)
             }
         }
     }
@@ -903,40 +1037,14 @@ const LEAD_PARTICLES: &str = "はがをにへの";
 /// (今日は|いい|天気ですね). The whole rest when the two can't be aligned.
 fn next_word(reading: &str, surface: &str, after_content: bool) -> (usize, usize) {
     let r: Vec<char> = reading.chars().collect();
-    let s: Vec<char> = surface.chars().collect();
-    let hira = |c: char| matches!(c, 'ぁ'..='ゖ' | 'ー');
     let particle = |c: char| PARTICLES.contains(c);
-    // Align: (reading end, is hiragana) per unit — a kana matching its
-    // reading char, or a kanji/katakana run with the reading up to the
-    // kana that follows it.
-    let mut units = Vec::new();
-    let (mut i, mut j) = (0, 0);
-    while j < s.len() {
-        if i < r.len() && hira(s[j]) && s[j] == r[i] {
-            i += 1;
-            j += 1;
-            units.push((i, true, s[j - 1]));
-            continue;
-        }
-        let mut j2 = j + 1;
-        while j2 < s.len() && !hira(s[j2]) {
-            j2 += 1;
-        }
-        let i2 = if j2 == s.len() {
-            Some(r.len())
-        } else {
-            (i + 1..r.len()).find(|&k| r[k] == s[j2])
-        };
-        let Some(i2) = i2.filter(|_| i < r.len()) else {
-            return (0, r.len());
-        };
-        i = i2;
-        j = j2;
-        units.push((i, false, s[j - 1]));
-    }
-    if i != r.len() {
+    let Some(units) = align(reading, surface) else {
         return (0, r.len());
-    }
+    };
+    let units: Vec<(usize, bool, char)> = units
+        .iter()
+        .map(|u| (u.reading_end, u.kana, u.last))
+        .collect();
     // Leading particles, when more follows.
     let lead_units = units
         .iter()
@@ -973,15 +1081,143 @@ fn next_word(reading: &str, surface: &str, after_content: bool) -> (usize, usize
     (lead, end)
 }
 
+/// One piece of a conversion lined up with its reading: a kana standing for
+/// itself, or a kanji/katakana run standing for the reading up to the kana
+/// that follows it. Ends are in chars.
+#[derive(Debug, Clone, Copy)]
+struct Unit {
+    reading_end: usize,
+    surface_end: usize,
+    kana: bool,
+    last: char,
+}
+
+fn is_hiragana(c: char) -> bool {
+    matches!(c, 'ぁ'..='ゖ' | 'ー')
+}
+
+/// Line `surface` up with `reading`, `None` when they don't match.
+fn align(reading: &str, surface: &str) -> Option<Vec<Unit>> {
+    let r: Vec<char> = reading.chars().collect();
+    let s: Vec<char> = surface.chars().collect();
+    let mut units = Vec::new();
+    let (mut i, mut j) = (0, 0);
+    while j < s.len() {
+        if i < r.len() && is_hiragana(s[j]) && s[j] == r[i] {
+            i += 1;
+            j += 1;
+            units.push(Unit {
+                reading_end: i,
+                surface_end: j,
+                kana: true,
+                last: s[j - 1],
+            });
+            continue;
+        }
+        let mut j2 = j + 1;
+        while j2 < s.len() && !is_hiragana(s[j2]) {
+            j2 += 1;
+        }
+        if i >= r.len() {
+            return None;
+        }
+        i = if j2 == s.len() {
+            r.len()
+        } else {
+            (i + 1..r.len()).find(|&k| r[k] == s[j2])?
+        };
+        j = j2;
+        units.push(Unit {
+            reading_end: i,
+            surface_end: j,
+            kana: false,
+            last: s[j - 1],
+        });
+    }
+    (i == r.len()).then_some(units)
+}
+
+/// The last kanji run of `surface`: its span in `surface` (chars) and its
+/// reading.
+fn last_kanji(reading: &str, surface: &str) -> Option<(usize, usize, String)> {
+    let units = align(reading, surface)?;
+    let k = units
+        .iter()
+        .rposition(|u| !u.kana && matches!(u.last, '\u{3400}'..='\u{9FFF}' | '々'))?;
+    let (reading_start, surface_start) = match k {
+        0 => (0, 0),
+        _ => (units[k - 1].reading_end, units[k - 1].surface_end),
+    };
+    let text = reading
+        .chars()
+        .skip(reading_start)
+        .take(units[k].reading_end - reading_start)
+        .collect();
+    Some((surface_start, units[k].surface_end, text))
+}
+
+/// `surface` with the last `n` chars of `reading` back in kana: converted
+/// up to the piece holding the cut, the reading from there (a kanji run
+/// the cut falls in goes back whole).
+fn with_kana_tail(reading: &str, surface: &str, n: usize) -> Option<String> {
+    let units = align(reading, surface)?;
+    let r: Vec<char> = reading.chars().collect();
+    let cut = r.len().saturating_sub(n);
+    let k = units.iter().position(|u| u.reading_end > cut)?;
+    let (reading_start, surface_start) = match k {
+        0 => (0, 0),
+        _ => (units[k - 1].reading_end, units[k - 1].surface_end),
+    };
+    let head: String = surface.chars().take(surface_start).collect();
+    let tail: String = r[reading_start..].iter().collect();
+    Some(head + &tail)
+}
+
+/// Whether Backspace would take a kana that stands on its own in the
+/// preedit (the で of 規定で), not a piece of a kanji run's reading.
+fn deletes_a_lone_kana(engine: &InputMethodEngine) -> bool {
+    if engine.has_pending_romaji() {
+        return true;
+    }
+    let reading = engine.reading();
+    let Some(preedit) = engine.preedit() else {
+        return false;
+    };
+    align(&reading, preedit.text()).is_some_and(|units| units.last().is_some_and(|u| u.kana))
+}
+
+/// [`last_kanji`] of a live preedit, unfired romaji left out of both.
+fn inline_kanji(reading: &str, preedit: &str) -> Option<(usize, usize, String)> {
+    let (reading, _) = split_pending(reading);
+    let (preedit, _) = split_pending(preedit);
+    last_kanji(reading, preedit)
+}
+
+/// The preedit with the typed tail back in kana ([`with_kana_tail`]), caret
+/// at its end.
+fn kana_tail_preedit(reading: &str, preedit: &str, n: usize) -> Option<Preedit> {
+    let (reading, pending) = split_pending(reading);
+    let (shown, _) = split_pending(preedit);
+    let text = with_kana_tail(reading, shown, n)? + pending;
+    Some(Preedit::with_text_underlined(text))
+}
+
+/// Unfired romaji at the end of the reading and the preedit (`か|k`): kept
+/// out of the alignment, put back after.
+fn split_pending(text: &str) -> (&str, &str) {
+    let kana = text.trim_end_matches(|c: char| c.is_ascii_alphabetic());
+    (kana, &text[kana.len()..])
+}
+
 fn composing(engine: &InputMethodEngine) -> bool {
     matches!(engine.state(), InputState::Composing { .. })
 }
 
 /// The reading held right of the caret, shown after the converted left
 /// side. The left side, what converts, is highlighted (a thick underline)
-/// and the rest gets a plain one: many applications (Chromium, terminals)
-/// draw the caret at the end of the preedit whatever it is told, so the
-/// boundary must show without it. The caret is still put there.
+/// and the rest gets a plain one: some applications draw the caret at the
+/// end of the preedit whatever they are told, so the boundary must show
+/// without it. The caret is still put there.
 fn show_split(tail: &str, result: &mut EngineResult) {
     for action in &mut result.actions {
         if let EngineAction::UpdatePreedit(preedit) = action
@@ -1320,6 +1556,42 @@ mod tests {
     }
 
     #[test]
+    fn the_last_kanji_run_and_its_reading() {
+        assert_eq!(
+            last_kanji("きょうはいいてんき", "今日はいい天気"),
+            Some((5, 7, "てんき".into()))
+        );
+        assert_eq!(
+            last_kanji("かいたてすと", "書いたテスト"),
+            Some((0, 1, "か".into()))
+        );
+        assert_eq!(last_kanji("いいね", "いいね"), None);
+        assert_eq!(
+            inline_kanji("てんきk", "天気k"),
+            Some((0, 2, "てんき".into()))
+        );
+    }
+
+    #[test]
+    fn the_typed_tail_goes_back_to_kana() {
+        // The cut in 天気 takes the whole run back.
+        assert_eq!(
+            with_kana_tail("きょうはいいてんき", "今日はいい天気", 2).as_deref(),
+            Some("今日はいいてんき")
+        );
+        assert_eq!(
+            with_kana_tail("きょうはいい", "今日はいい", 2).as_deref(),
+            Some("今日はいい")
+        );
+        assert_eq!(
+            with_kana_tail("きょうは", "今日は", 2).as_deref(),
+            Some("きょうは")
+        );
+        let shown = kana_tail_preedit("きょうはk", "今日はk", 1).unwrap();
+        assert_eq!(shown.text(), "今日はk");
+    }
+
+    #[test]
     fn capital_chains_parts() {
         let (mut layer, mut engine) = setup();
         assert_eq!(feed(&mut layer, &mut engine, "Honjitu"), "");
@@ -1431,10 +1703,6 @@ mod tests {
             })
             .collect();
         assert_eq!(aux, ["かいぎ"]);
-        // No model: the preedit is the kana itself, nothing to show beside it.
-        layer.process_key(&mut engine, &ctrl('g'));
-        layer.hint = PartHint::Reading;
-        assert_eq!(layer.hint(&engine), None);
     }
 
     #[test]
