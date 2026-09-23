@@ -253,42 +253,50 @@ final class UserDictionary: ObservableObject {
     }
 }
 
-// MARK: - Learning history (held by the running engine)
+// MARK: - Learning and completion history (held by the running engine)
 
 struct LearnedEntry: Identifiable, Hashable {
     var id: String { reading + "\t" + surface }
     let reading: String
     let surface: String
     let frequency: Int
+    let lastAccess: Date
 }
 
+/// One of the engine's two conversion stores: `learning` (what reranks
+/// conversion) or `history` (every commit, what completion draws from).
+/// The store name prefixes its methods (`learning_list`, `history_list`, …).
 final class LearningHistory: ObservableObject {
     @Published var entries: [LearnedEntry] = []
+    let store: String
+
+    init(store: String) { self.store = store }
 
     func load() {
         guard
-            let data = engineClient.sendRequestSync(method: "learning_list", params: [:], timeout: 2),
+            let data = engineClient.sendRequestSync(method: "\(store)_list", params: [:], timeout: 2),
             let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
             let raw = json["entries"] as? [[String: Any]]
         else { return }
         entries = raw.map {
             LearnedEntry(
                 reading: $0["reading"] as? String ?? "", surface: $0["surface"] as? String ?? "",
-                frequency: $0["frequency"] as? Int ?? 0)
+                frequency: $0["frequency"] as? Int ?? 0,
+                lastAccess: Date(timeIntervalSince1970: $0["last_access"] as? Double ?? 0))
         }
     }
 
     func remove(_ doomed: [LearnedEntry]) {
         for entry in doomed {
             _ = engineClient.sendRequestSync(
-                method: "learning_remove",
+                method: "\(store)_remove",
                 params: ["reading": entry.reading, "surface": entry.surface], timeout: 2)
         }
         load()
     }
 
     func clear() {
-        _ = engineClient.sendRequestSync(method: "learning_clear", params: [:], timeout: 2)
+        _ = engineClient.sendRequestSync(method: "\(store)_clear", params: [:], timeout: 2)
         load()
     }
 }
@@ -672,18 +680,33 @@ struct DictionaryTab: View {
     }
 }
 
+/// The 学習 and 履歴 tabs: one store's entries, newest first by default.
 struct LearningTab: View {
-    @StateObject private var history = LearningHistory()
+    @StateObject private var history: LearningHistory
+    /// What the store holds, for the reset dialog (学習 / 履歴).
+    let noun: String
     @State private var selection = Set<LearnedEntry.ID>()
     @State private var query = ""
     @State private var confirmReset = false
+    @State private var sortOrder = [KeyPathComparator(\LearnedEntry.lastAccess, order: .reverse)]
+
+    init(store: String, noun: String) {
+        _history = StateObject(wrappedValue: LearningHistory(store: store))
+        self.noun = noun
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Table(filtered, selection: $selection) {
+            Table(filtered.sorted(using: sortOrder), selection: $selection, sortOrder: $sortOrder) {
                 TableColumn("よみ", value: \.reading)
                 TableColumn("確定した語", value: \.surface)
-                TableColumn("回数") { Text("\($0.frequency)").monospacedDigit() }.width(48)
+                TableColumn("回数", value: \.frequency) { Text("\($0.frequency)").monospacedDigit() }
+                    .width(48)
+                TableColumn("最後に確定", value: \.lastAccess) {
+                    Text($0.lastAccess, format: .dateTime.year().month().day().hour().minute())
+                        .monospacedDigit()
+                }
+                .width(120)
             }
             HStack {
                 TextField("検索", text: $query).frame(width: 180)
@@ -700,10 +723,10 @@ struct LearningTab: View {
         }
         .padding(20)
         .onAppear { history.load() }
-        .confirmationDialog("学習をすべて消しますか？", isPresented: $confirmReset) {
+        .confirmationDialog("\(noun)をすべて消しますか？", isPresented: $confirmReset) {
             Button("すべて消す", role: .destructive) { history.clear() }
         } message: {
-            Text("\(history.entries.count) 件の学習が消え、元に戻せません。")
+            Text("\(history.entries.count) 件の\(noun)が消え、元に戻せません。")
         }
     }
 
@@ -724,7 +747,8 @@ struct SettingsView: View {
                 KeysTab(model: model).tabItem { Text("キー") }
                 ModelTab(model: model).tabItem { Text("モデル") }
                 DictionaryTab().tabItem { Text("辞書") }
-                LearningTab().tabItem { Text("学習") }
+                LearningTab(store: "learning", noun: "学習").tabItem { Text("学習") }
+                LearningTab(store: "history", noun: "履歴").tabItem { Text("履歴") }
             }
             if let error = model.error {
                 Text(error).foregroundStyle(Color(nsColor: Swiss.accent)).padding(8)
