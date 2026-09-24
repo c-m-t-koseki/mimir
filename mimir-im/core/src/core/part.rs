@@ -9,9 +9,12 @@
 //!
 //! Moving the caret inside a part (Ctrl+B / Ctrl+F, ← →) sets how much of
 //! it converts: the reading left of the caret opens in the candidate
-//! window, the rest waits in hiragana. Space or a picked candidate commits
-//! the left side and the rest goes on as the part, its first word taken up
-//! next; anything else ending the part commits both.
+//! window, the rest waits converted on its own (今日|の天気). Space or a
+//! picked candidate commits the left side and the rest goes on as the
+//! part, its first word taken up next; anything else ending the part
+//! commits both, the rest as shown. The pieces go to the history and the
+//! learning cache as one, once the last is committed: a pick is learned
+//! with what came after it.
 //!
 //! `q` inside a part commits its reading in katakana, as in SKK. `/` opens
 //! SKK's abbrev input, marked ▽ as there: letters go in as typed, Space
@@ -58,9 +61,9 @@ pub struct PartLayer {
     keys: Keymap,
     /// The open part is abbrev input (`/`).
     abbrev: bool,
-    /// The part's reading right of the caret, held out of the conversion
-    /// (the engine composes only the left side).
-    split: Option<String>,
+    /// The part right of the caret, held out of the conversion (the engine
+    /// composes only the left side).
+    split: Option<Split>,
     /// The candidate window's selection was moved (Ctrl+N/P): a–l then
     /// type on instead of picking.
     stepped: bool,
@@ -92,6 +95,26 @@ pub struct PartLayer {
 struct Registration {
     reading: String,
     word: String,
+}
+
+/// The part right of the caret: its reading, and that converted on its own
+/// — what shows after the left side, and what commits with it.
+struct Split {
+    reading: String,
+    text: String,
+}
+
+impl Split {
+    /// `reading` converted as live typing would show it (the engine's
+    /// composition is replaced; the caller composes the left side next).
+    fn converted(engine: &mut InputMethodEngine, reading: String) -> Self {
+        engine.reopen(&reading);
+        let text = engine
+            .preedit()
+            .map(|p| p.text().to_string())
+            .unwrap_or_else(|| reading.clone());
+        Self { reading, text }
+    }
 }
 
 impl Default for PartLayer {
@@ -204,6 +227,7 @@ impl PartLayer {
         self.mode = mode;
         if mode != PartMode::Part {
             self.split = None;
+            self.record_pieces(engine);
         }
         engine.set_live_conversion(mode == PartMode::Part);
         if self.abbrev {
@@ -270,8 +294,8 @@ impl PartLayer {
                 }
             }
         }
-        if let Some(tail) = &self.split {
-            show_split(tail, result);
+        if let Some(split) = &self.split {
+            show_split(&split.text, result);
         }
         if live && self.reading_display == ReadingDisplay::Inline {
             let reading = engine.reading();
@@ -426,7 +450,9 @@ impl PartLayer {
     /// cleanup actions as the engine's own commit. A part ends with it.
     pub fn flush(&mut self, engine: &mut InputMethodEngine) -> EngineResult {
         let result = match (self.mode, engine.state()) {
-            (PartMode::Part, _) | (_, InputState::Empty) => engine.commit_result(),
+            (_, InputState::Empty) => engine.commit_result(),
+            // The part right of the caret goes too.
+            (PartMode::Part, _) => self.close(engine),
             _ => engine.commit_plain_result(),
         };
         if self.mode == PartMode::Part {
@@ -438,21 +464,35 @@ impl PartLayer {
     /// Commit whatever is open: a part commits its conversion (and learns
     /// it), plain kana commits as typed.
     fn close(&mut self, engine: &mut InputMethodEngine) -> EngineResult {
-        let result = self.close_head(engine);
-        // The reading held right of the caret goes too, converted.
-        match self.split.take() {
-            Some(tail) => {
-                engine.reopen(&tail);
-                merge(result, self.close_head(engine))
-            }
-            None => result,
+        let mut result = self.close_head(engine);
+        // The part right of the caret goes too, as shown.
+        if let Some(split) = self.split.take() {
+            engine.note_commit(&split.reading, &split.text);
+            self.note_recent(split.reading, split.text.clone());
+            result = result.with_action(EngineAction::Commit(split.text));
         }
+        self.record_pieces(engine);
+        result
+    }
+
+    /// The pieces of a part cut at the caret are all committed: recorded as
+    /// one, which is also what a later one-char part joins.
+    fn record_pieces(&mut self, engine: &mut InputMethodEngine) {
+        if let Some((reading, text)) = engine.record_pieces() {
+            self.recent = None;
+            self.note_recent(reading, text);
+        }
+    }
+
+    /// The reading right of the caret, taken for the part that goes on.
+    fn take_tail(&mut self) -> Option<String> {
+        self.split.take().map(|split| split.reading)
     }
 
     /// Commit the part's left side (all of it without a split), keeping
     /// what is right of the caret for the part that goes on.
     fn close_keeping_tail(&mut self, engine: &mut InputMethodEngine) -> EngineResult {
-        let tail = self.split.take();
+        let tail = self.take_tail();
         let result = self.close_head(engine);
         self.continue_with(engine, tail, result)
     }
@@ -490,9 +530,11 @@ impl PartLayer {
                 let mut result = result;
                 if lead > 0 {
                     let particles: String = chars[..lead].iter().collect();
+                    engine.note_commit(&particles, &particles);
                     result = result.with_action(EngineAction::Commit(particles));
                 }
-                self.split = (end < chars.len()).then(|| chars[end..].iter().collect());
+                self.split = (end < chars.len())
+                    .then(|| Split::converted(engine, chars[end..].iter().collect()));
                 self.stepped = false;
                 let reopened = engine.reopen(&chars[lead..end].iter().collect::<String>());
                 merge(merge(result, reopened), engine.convert())
@@ -506,19 +548,21 @@ impl PartLayer {
 
     /// Ctrl+B / Ctrl+F (← →), Ctrl+A / Ctrl+E: move the caret, which is
     /// where the conversion stops, and open the left side's candidates. At
-    /// the end, the whole part is the target.
+    /// the end, the whole part is the target. From here the part commits in
+    /// pieces, which the engine holds until the last is in.
     fn move_split(
         &mut self,
         engine: &mut InputMethodEngine,
         to: impl Fn(usize, usize) -> usize,
     ) -> EngineResult {
         engine.settle_pending();
+        engine.hold_pieces();
         let head: Vec<char> = engine.reading().chars().collect();
-        let tail = self.split.take().unwrap_or_default();
+        let tail = self.take_tail().unwrap_or_default();
         let all: Vec<char> = head.iter().copied().chain(tail.chars()).collect();
         let cut = to(head.len(), all.len()).clamp(1, all.len().max(1));
         let (left, right) = all.split_at(cut.min(all.len()));
-        self.split = (!right.is_empty()).then(|| right.iter().collect());
+        self.split = (!right.is_empty()).then(|| Split::converted(engine, right.iter().collect()));
         self.stepped = false;
         let result = engine.reopen(&left.iter().collect::<String>());
         merge(result, engine.convert())
@@ -787,7 +831,7 @@ impl PartLayer {
     fn after_edit(&mut self, engine: &mut InputMethodEngine, key: &KeyEvent) -> EngineResult {
         let result = engine.process_key(key);
         if matches!(engine.state(), InputState::Empty) {
-            let tail = self.split.take();
+            let tail = self.take_tail();
             return self.continue_with(engine, tail, result);
         }
         result
@@ -842,7 +886,7 @@ impl PartLayer {
         {
             let result = engine.select_candidate_on_page(index);
             if matches!(engine.state(), InputState::Empty) {
-                let tail = self.split.take();
+                let tail = self.take_tail();
                 return self.continue_with(engine, tail, result);
             }
             return result;
@@ -955,21 +999,22 @@ impl PartLayer {
             .with_action(EngineAction::Commit(text))
             .with_action(EngineAction::HideCandidates)
             .with_action(EngineAction::HideAuxText);
-        let tail = self.split.take();
+        let tail = self.take_tail();
         self.continue_with(engine, tail, result)
     }
 
     /// Commit the selected candidate; what is right of the caret goes on
     /// as the part.
     fn commit_conversion(&mut self, engine: &mut InputMethodEngine) -> EngineResult {
-        let tail = self.split.take();
+        let tail = self.take_tail();
         let result = engine.process_key(&press(Keysym::RETURN));
         self.continue_with(engine, tail, result)
     }
 
-    /// Commit the selected candidate and the rest of the part with it.
+    /// Commit the selected candidate and the rest of the part with it, as
+    /// shown.
     fn commit_conversion_all(&mut self, engine: &mut InputMethodEngine) -> EngineResult {
-        let result = self.commit_conversion(engine);
+        let result = engine.process_key(&press(Keysym::RETURN));
         let result = merge(result, self.close(engine));
         self.enter(engine, PartMode::Plain);
         result
@@ -1537,6 +1582,67 @@ mod tests {
         assert!(matches!(engine.state(), InputState::Conversion { .. }));
         assert_eq!(feed(&mut layer, &mut engine, "j"), "きょう");
         assert_eq!(engine.reading(), "は");
+    }
+
+    /// What a key's result commits, joined.
+    fn commits(result: &EngineResult) -> String {
+        result
+            .actions
+            .iter()
+            .filter_map(|a| match a {
+                EngineAction::Commit(t) => Some(t.as_str()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_rest_right_of_the_caret_shows_converted_on_its_own() {
+        let (mut layer, mut engine) = setup();
+        engine_learning_on(&mut engine);
+        // No model: teach の天気 after 昨日は, which live conversion then
+        // shows for のてんき typed there.
+        engine.set_surrounding_context("昨日は", "");
+        engine.learn_after("のてんき", "の天気", "");
+        feed(&mut layer, &mut engine, "Kyounotenki");
+        for _ in 0..3 {
+            layer.process_key(&mut engine, &ctrl('b'));
+        }
+        let back = shown(&mut layer, &mut engine, &ctrl('b'));
+        assert_eq!(back, Some(("きょうの天気".into(), 3)));
+        assert_eq!(engine.reading(), "きょう");
+        // Enter commits the rest as shown. Nothing was picked: the whole
+        // goes to the history only.
+        let result = layer.process_key(&mut engine, &press(Keysym::RETURN));
+        assert_eq!(commits(&result), "きょうの天気");
+        assert!(!learned(&engine).iter().any(|(r, _)| r == "きょうのてんき"));
+        feed(&mut layer, &mut engine, "Kyou");
+        assert_eq!(engine.completions(3), vec!["きょうの天気".to_string()]);
+    }
+
+    #[test]
+    fn a_part_cut_at_the_caret_is_recorded_whole_once_committed() {
+        let (mut layer, mut engine) = setup();
+        engine_learning_on(&mut engine);
+        feed(&mut layer, &mut engine, "Kyounotenki");
+        for _ in 0..4 {
+            layer.process_key(&mut engine, &ctrl('b'));
+        }
+        // キョウ picked over きょう (の goes out with it): nothing is
+        // recorded while the rest waits.
+        assert_eq!(feed(&mut layer, &mut engine, "k"), "キョウの");
+        assert!(learned(&engine).is_empty(), "{:?}", learned(&engine));
+        assert!(engine.completions(3).is_empty());
+        // The rest goes out; then the whole is learned, with what followed
+        // the pick, and completes later input.
+        assert_eq!(feed(&mut layer, &mut engine, " "), "てんき");
+        let got = learned(&engine);
+        assert_eq!(
+            got,
+            [("きょうのてんき".to_string(), "キョウのてんき".to_string())]
+        );
+        feed(&mut layer, &mut engine, "Kyou");
+        assert_eq!(engine.completions(3), vec!["キョウのてんき".to_string()]);
     }
 
     #[test]
