@@ -21,6 +21,19 @@ function Find-VCTools {
     & $vswhere -products * -latest -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
 }
 
+# The cmake crate generates for the newest Visual Studio ("Visual Studio 18
+# 2026"), which a CMake older than that Visual Studio doesn't know.
+function Test-CMakeGenerator {
+    # No cmake, or no Visual Studio: the checks for those speak up instead.
+    if (-not (Get-Command cmake -ErrorAction SilentlyContinue)) { return $true }
+    $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
+    if (-not (Test-Path $vswhere)) { return $true }
+    $version = & $vswhere -products * -latest -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationVersion
+    if (-not $version) { return $true }
+    $major = $version.Split(".")[0]
+    return [bool]((cmake --help) -match "Visual Studio $major ")
+}
+
 function Find-Libclang {
     foreach ($dir in @($env:LIBCLANG_PATH, (Join-Path $env:ProgramFiles "LLVM\bin"))) {
         if ($dir -and (Test-Path (Join-Path $dir "libclang.dll"))) { return $dir }
@@ -53,6 +66,9 @@ function Initialize-BuildTools {
     }
     if (-not (Get-Command cmake -ErrorAction SilentlyContinue)) {
         $missing += @{ Name = "CMake"; Id = "Kitware.CMake"; Args = @() }
+    } elseif (-not (Test-CMakeGenerator)) {
+        # winget install upgrades a package already installed.
+        $missing += @{ Name = "CMake (newer, for this Visual Studio)"; Id = "Kitware.CMake"; Args = @() }
     }
     if (-not (Find-Libclang)) {
         $missing += @{ Name = "LLVM (libclang)"; Id = "LLVM.LLVM"; Args = @() }
@@ -84,6 +100,7 @@ function Initialize-BuildTools {
         @{ Name = "cargo"; Ok = [bool](Get-Command cargo -ErrorAction SilentlyContinue) },
         @{ Name = "Visual Studio C++ build tools"; Ok = [bool](Find-VCTools) },
         @{ Name = "cmake"; Ok = [bool](Get-Command cmake -ErrorAction SilentlyContinue) },
+        @{ Name = "a cmake that knows this Visual Studio"; Ok = (Test-CMakeGenerator) },
         @{ Name = "libclang"; Ok = [bool]$env:LIBCLANG_PATH })) {
         if (-not $check.Ok) { throw "$($check.Name) still not found; open a new PowerShell and run this again." }
     }
