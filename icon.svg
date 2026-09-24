@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <!-- Mimir: the M, and below it the well (Mímisbrunnr) as a ring seen
+       from above at an angle; its far side runs behind the M. -->
+  <rect width="256" height="256" fill="#1a1a1a"/>
+  <!-- The far half of the ring, drawn first so the M covers it. -->
+  <path d="M 32 176 A 96 30 0 0 1 224 176" fill="none" stroke="#e30613" stroke-width="16"/>
+  <path fill="#ffffff" d="M 40 200 V 40 H 84 L 128 120 L 172 40 H 216 V 200 H 176 V 108 L 142 168 H 114 L 80 108 V 200 Z"/>
+  <!-- The near half, in front: a gap of the ground around it where it crosses the M. -->
+  <path d="M 32 176 A 96 30 0 0 0 224 176" fill="none" stroke="#1a1a1a" stroke-width="32"/>
+  <path d="M 32 176 A 96 30 0 0 0 224 176" fill="none" stroke="#e30613" stroke-width="16"/>
+</svg>
