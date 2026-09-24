@@ -1,5 +1,6 @@
 //! The COM DLL: exports, class factory, and TSF registration.
 
+mod langbar;
 mod service;
 
 use std::ffi::c_void;
