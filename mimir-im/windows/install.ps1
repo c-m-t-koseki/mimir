@@ -114,8 +114,15 @@ if ($Uninstall) {
     return
 }
 
-cargo build --release --manifest-path "$root\Cargo.toml" -p mimir-im --bin mimir-imserver
-cargo build --release --manifest-path "$root\Cargo.toml" -p mimir-tsf -p mimir-settings
+# A failing native command doesn't stop the script ($ErrorActionPreference
+# covers cmdlets only): stop at the build that failed, not at the copy after it.
+function Invoke-Cargo {
+    cargo @args
+    if ($LASTEXITCODE -ne 0) { throw "cargo $($args -join ' ') failed (exit $LASTEXITCODE); its error is above." }
+}
+
+Invoke-Cargo build --release --manifest-path "$root\Cargo.toml" -p mimir-im --bin mimir-imserver
+Invoke-Cargo build --release --manifest-path "$root\Cargo.toml" -p mimir-tsf -p mimir-settings
 
 New-Item -ItemType Directory -Force $dest | Out-Null
 Copy-Item "$root\target\release\mimir_tsf.dll" $dest -Force
@@ -147,5 +154,6 @@ if (-not (Test-Path "$data\dict.bin")) {
 # Models into the HuggingFace cache, so the first key doesn't wait on a download.
 & "$dest\mimir-imserver.exe" --prefetch-models
 
-Start-Process regsvr32 -ArgumentList "/s", "`"$dll`"" -Wait
+$register = Start-Process regsvr32 -ArgumentList "/s", "`"$dll`"" -Wait -PassThru
+if ($register.ExitCode -ne 0) { throw "regsvr32 failed to register $dll (exit $($register.ExitCode))." }
 Write-Host "Installed to $dest. Add Mimir in Settings > Time & language > Language & region > Japanese > Language options > Keyboards."
