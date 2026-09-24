@@ -39,9 +39,12 @@ data/
 !mimir-engine/data/
 *.json
 !renovate.json
+!mimir-im/windows/settings/tauri.conf.json
 *.cache
 
 .fake
 # macOS IME (mimir-macos)
 mimir-im/macos/.build/
 mimir-im/macos/out/
+# Windows settings window (tauri-build writes its schemas here)
+mimir-im/windows/settings/gen/
