@@ -128,6 +128,10 @@ pub struct InputMethodEngine {
     /// The last pick learned, `(reading, surface)`, for the part layer
     /// (it learns a one-char pick joined to what came before).
     chosen: Option<(String, String)>,
+    /// A part being committed in pieces (the part layer cut it at the
+    /// caret): its commits held back from the history and the learning
+    /// cache until [`Self::record_pieces`] records them as one.
+    pieces: Option<Pieces>,
     /// Engine configuration
     config: EngineConfig,
     /// Conversion timing and adaptive model metrics
@@ -187,6 +191,7 @@ impl InputMethodEngine {
             conversion_origin: String::new(),
             history: None,
             chosen: None,
+            pieces: None,
             config: EngineConfig::default(),
             metrics: ConversionMetrics::default(),
             mode: ModeState::default(),
@@ -370,6 +375,10 @@ impl InputMethodEngine {
 
     /// Note a committed conversion in the completion history.
     pub(super) fn record_history(&mut self, reading: &str, surface: &str) {
+        if let Some(pieces) = &mut self.pieces {
+            pieces.push(Some(reading), surface, false);
+            return;
+        }
         if reading != surface
             && let Some(history) = &mut self.history
         {
@@ -442,6 +451,44 @@ impl InputMethodEngine {
     /// The pick the last conversion commit learned, if it learned one.
     pub fn take_chosen(&mut self) -> Option<(String, String)> {
         self.chosen.take()
+    }
+
+    /// Hold the commits that follow back from the history and the learning
+    /// cache: the part layer commits a part cut at the caret piece by
+    /// piece, and each piece belongs with what comes after it. They are
+    /// recorded as one by [`Self::record_pieces`]. Already holding: nothing.
+    pub fn hold_pieces(&mut self) {
+        if self.pieces.is_none() {
+            self.pieces = Some(Pieces {
+                lctx: self.truncate_context_for_api(),
+                ..Pieces::default()
+            });
+        }
+    }
+
+    /// Text the part layer committed itself (the particles going out with
+    /// the word before them), noted like the engine's own commits.
+    pub fn note_commit(&mut self, reading: &str, text: &str) {
+        self.record_history(reading, text);
+    }
+
+    /// Record the held pieces as one commit: in the history, and — when one
+    /// of them was picked over the model's answer — in the learning cache,
+    /// after the context the first piece followed. Returns what they add
+    /// up to, `(reading, text)`, when anything was recorded.
+    pub fn record_pieces(&mut self) -> Option<(String, String)> {
+        let pieces = self.pieces.take()?;
+        if pieces.unrecordable || pieces.reading.is_empty() {
+            return None;
+        }
+        self.record_history(&pieces.reading, &pieces.text);
+        if pieces.picked
+            && self.mode.current() != InputMode::Emoji
+            && let Some(cache) = &mut self.learning
+        {
+            cache.record_with_context(&pieces.reading, &pieces.text, &pieces.lctx);
+        }
+        Some((pieces.reading, pieces.text))
     }
 
     pub fn learn(&mut self, reading: &str, surface: &str) {
@@ -1009,6 +1056,32 @@ fn cache_entries(cache: &Option<LearningCache>) -> Vec<(String, String, u32, u64
             .map(|(r, e)| (r.to_string(), e.surface.clone(), e.frequency, e.last_access))
             .collect()
     })
+}
+
+/// A part committed in pieces ([`InputMethodEngine::hold_pieces`]): what
+/// they add up to so far.
+#[derive(Debug, Default)]
+struct Pieces {
+    reading: String,
+    text: String,
+    /// A piece was picked over the model's answer: the whole is learned.
+    picked: bool,
+    /// A piece had no reading to be recorded under (a date, stale
+    /// tomorrow): nothing is.
+    unrecordable: bool,
+    /// The left context before the first piece.
+    lctx: String,
+}
+
+impl Pieces {
+    fn push(&mut self, reading: Option<&str>, text: &str, picked: bool) {
+        match reading {
+            Some(reading) => self.reading.push_str(reading),
+            None => self.unrecordable = true,
+        }
+        self.text.push_str(text);
+        self.picked |= picked;
+    }
 }
 
 impl Default for InputMethodEngine {
