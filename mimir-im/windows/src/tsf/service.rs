@@ -12,15 +12,16 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 use windows::Win32::UI::TextServices::{
     ITfComposition, ITfCompositionSink, ITfCompositionSink_Impl, ITfContext, ITfContextComposition,
     ITfEditSession, ITfEditSession_Impl, ITfInsertAtSelection, ITfKeyEventSink,
-    ITfKeyEventSink_Impl, ITfKeystrokeMgr, ITfRange, ITfTextInputProcessor,
-    ITfTextInputProcessor_Impl, ITfTextInputProcessorEx, ITfTextInputProcessorEx_Impl,
-    ITfThreadMgr, TF_AE_NONE, TF_ANCHOR_END, TF_ANCHOR_START, TF_ES_READWRITE, TF_ES_SYNC,
-    TF_IAS_QUERYONLY, TF_SELECTION, TF_SELECTIONSTYLE,
+    ITfKeyEventSink_Impl, ITfKeystrokeMgr, ITfLangBarItem, ITfLangBarItemMgr, ITfRange,
+    ITfTextInputProcessor, ITfTextInputProcessor_Impl, ITfTextInputProcessorEx,
+    ITfTextInputProcessorEx_Impl, ITfThreadMgr, TF_AE_NONE, TF_ANCHOR_END, TF_ANCHOR_START,
+    TF_ES_READWRITE, TF_ES_SYNC, TF_IAS_QUERYONLY, TF_SELECTION, TF_SELECTIONSTYLE,
 };
 use windows::core::{BOOL, GUID, Interface, Ref, Result, implement};
 use windows_core::IUnknownImpl;
 
-use crate::client::{Action, EngineClient, KeyResult, Modifiers};
+use super::langbar::{ModeButton, ModeState, set_mode};
+use crate::client::{Action, EngineClient, KeyResult, Modifiers, Watched};
 use crate::keymap::{is_modifier_vk, keysym_for_char, keysym_for_vk};
 
 /// What the service and its edit sessions share.
@@ -29,6 +30,11 @@ struct State {
     thread_mgr: Option<ITfThreadMgr>,
     client_id: u32,
     engine: Option<EngineClient>,
+    /// The settings files as the engine read them: when the settings
+    /// window changes one, the engine starts over.
+    watched: Option<Watched>,
+    /// The input mode button in the taskbar, while active.
+    button: Option<ITfLangBarItem>,
     /// The composition holding the engine's preedit.
     composition: Option<ITfComposition>,
     /// `OnTestKeyDown` asks the engine (whose answer has effects, so it
@@ -44,13 +50,26 @@ struct State {
 )]
 pub struct TextService {
     state: Rc<RefCell<State>>,
+    mode: Rc<RefCell<ModeState>>,
 }
 
 impl TextService {
     pub fn new() -> Self {
         Self {
             state: Rc::default(),
+            mode: Rc::default(),
         }
+    }
+}
+
+impl State {
+    /// A fresh engine, and how the settings files were when it read them.
+    fn start_engine(&mut self) {
+        // ponytail: one server per application process; a shared server
+        // (one model load for every app) is the next step, see docs/windows.md.
+        self.engine = None;
+        self.engine = EngineClient::spawn(&server_path()).ok();
+        self.watched = self.engine.as_mut().map(EngineClient::watched);
     }
 }
 
@@ -69,12 +88,16 @@ impl ITfTextInputProcessor_Impl for TextService_Impl {
                 .cast::<ITfKeystrokeMgr>()?
                 .AdviseKeyEventSink(client_id, &sink, true)?;
         }
+        let button: ITfLangBarItem = ModeButton::new(self.mode.clone()).into();
+        // No button (no input indicator) still types.
+        let shown = thread_mgr
+            .cast::<ITfLangBarItemMgr>()
+            .and_then(|items| unsafe { items.AddItem(&button) });
         let mut state = self.state.borrow_mut();
+        state.button = shown.is_ok().then_some(button);
         state.thread_mgr = Some(thread_mgr);
         state.client_id = client_id;
-        // ponytail: one server per application process; a shared server
-        // (one model load for every app) is the next step, see docs/windows.md.
-        state.engine = EngineClient::spawn(&server_path()).ok();
+        state.start_engine();
         Ok(())
     }
 
@@ -85,11 +108,17 @@ impl ITfTextInputProcessor_Impl for TextService_Impl {
                 let _ = thread_mgr
                     .cast::<ITfKeystrokeMgr>()
                     .and_then(|keys| keys.UnadviseKeyEventSink(state.client_id));
+                if let Some(button) = state.button.take() {
+                    let _ = thread_mgr
+                        .cast::<ITfLangBarItemMgr>()
+                        .and_then(|items| items.RemoveItem(&button));
+                }
             }
         }
         state.composition = None;
         state.pending = None;
         state.engine = None;
+        state.watched = None;
         Ok(())
     }
 }
@@ -152,7 +181,21 @@ fn translate(vk: u16, lparam: LPARAM) -> Option<(u32, Modifiers)> {
 }
 
 impl ITfKeyEventSink_Impl for TextService_Impl {
-    fn OnSetFocus(&self, _foreground: BOOL) -> Result<()> {
+    /// Coming back to the application: follow what the settings window (or
+    /// another application's engine) changed meanwhile.
+    fn OnSetFocus(&self, foreground: BOOL) -> Result<()> {
+        if !foreground.as_bool() {
+            return Ok(());
+        }
+        let mut state = self.state.borrow_mut();
+        if state.composition.is_some() {
+            return Ok(());
+        }
+        if state.watched.as_ref().is_some_and(Watched::changed) {
+            state.start_engine();
+        } else if let Some(engine) = state.engine.as_mut() {
+            engine.save_learning();
+        }
         Ok(())
     }
 
@@ -176,6 +219,7 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
             return Ok(false.into());
         };
         let consumed = result.consumed;
+        set_mode(&self.mode, &result.mode);
         state.pending = Some((vk, result));
         Ok(consumed.into())
     }
@@ -193,6 +237,9 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
                 })
             }
         };
+        if let Some(result) = &result {
+            set_mode(&self.mode, &result.mode);
+        }
         let Some(result) = result.filter(|r| r.consumed) else {
             return Ok(false.into());
         };

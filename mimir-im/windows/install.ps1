@@ -8,8 +8,8 @@ $ErrorActionPreference = "Stop"
 
 # --- Build tools -------------------------------------------------------------
 # Rust (MSVC), the Visual Studio C++ build tools, CMake (llama.cpp) and LLVM
-# (libclang, for llama.cpp's bindgen). What is missing is installed with
-# winget, after asking once.
+# (libclang, for llama.cpp's bindgen), and the WebView2 runtime the settings
+# window draws in. What is missing is installed with winget, after asking once.
 
 function Add-Path($dir) {
     if ((Test-Path $dir) -and ($env:Path -split ";" -notcontains $dir)) { $env:Path = "$dir;$env:Path" }
@@ -24,6 +24,16 @@ function Find-VCTools {
 function Find-Libclang {
     foreach ($dir in @($env:LIBCLANG_PATH, (Join-Path $env:ProgramFiles "LLVM\bin"))) {
         if ($dir -and (Test-Path (Join-Path $dir "libclang.dll"))) { return $dir }
+    }
+    return $null
+}
+
+function Find-WebView2 {
+    # The Evergreen runtime's client key, machine-wide or per user.
+    $client = "Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
+    foreach ($key in @("HKLM:\SOFTWARE\WOW6432Node\$client", "HKLM:\SOFTWARE\$client", "HKCU:\Software\$client")) {
+        $version = (Get-ItemProperty $key -ErrorAction SilentlyContinue).pv
+        if ($version -and $version -ne "0.0.0.0") { return $version }
     }
     return $null
 }
@@ -46,6 +56,9 @@ function Initialize-BuildTools {
     }
     if (-not (Find-Libclang)) {
         $missing += @{ Name = "LLVM (libclang)"; Id = "LLVM.LLVM"; Args = @() }
+    }
+    if (-not (Find-WebView2)) {
+        $missing += @{ Name = "WebView2 Runtime"; Id = "Microsoft.EdgeWebView2Runtime"; Args = @() }
     }
 
     if ($missing) {
@@ -87,24 +100,33 @@ if (-not $Uninstall) {
 $root = Resolve-Path "$PSScriptRoot\..\.."
 $dest = Join-Path $env:ProgramFiles "Mimir"
 $dll = Join-Path $dest "mimir_tsf.dll"
+$shortcut = Join-Path $env:ProgramData "Microsoft\Windows\Start Menu\Programs\Mimir Settings.lnk"
 
 if (Test-Path $dll) {
     Start-Process regsvr32 -ArgumentList "/s", "/u", "`"$dll`"" -Wait
     # A DLL still loaded by running applications can't be overwritten.
-    Get-Process mimir-imserver -ErrorAction SilentlyContinue | Stop-Process
+    Get-Process mimir-imserver, mimir-settings -ErrorAction SilentlyContinue | Stop-Process
 }
 if ($Uninstall) {
+    Remove-Item -Force $shortcut -ErrorAction SilentlyContinue
     Remove-Item -Recurse -Force $dest -ErrorAction SilentlyContinue
     Write-Host "Uninstalled. Sign out and back in to unload it from running applications."
     return
 }
 
 cargo build --release --manifest-path "$root\Cargo.toml" -p mimir-im --bin mimir-imserver
-cargo build --release --manifest-path "$root\Cargo.toml" -p mimir-tsf
+cargo build --release --manifest-path "$root\Cargo.toml" -p mimir-tsf -p mimir-settings
 
 New-Item -ItemType Directory -Force $dest | Out-Null
 Copy-Item "$root\target\release\mimir_tsf.dll" $dest -Force
 Copy-Item "$root\target\release\mimir-imserver.exe" $dest -Force
+Copy-Item "$root\target\release\mimir-settings.exe" $dest -Force
+
+# The settings window opens from the input indicator's menu (a right click on
+# the mode icon); the Start menu entry is for pinning it too.
+$link = (New-Object -ComObject WScript.Shell).CreateShortcut($shortcut)
+$link.TargetPath = Join-Path $dest "mimir-settings.exe"
+$link.Save()
 
 # System dictionary, unless one is installed (the IME works model-only without it).
 $data = Join-Path $env:APPDATA "mimir\mimir-im\data"
