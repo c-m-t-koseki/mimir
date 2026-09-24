@@ -1,0 +1,242 @@
+/* Swiss style, as the macOS candidate window: an 8px grid, sans-serif,
+   one accent (the same red), a 1.414 type scale (12 / 14 / 20). */
+
+:root {
+  --base: #ffffff;
+  --main: #1a1a1a;
+  --muted: #6b6b6b;
+  --line: #e0e0e0;
+  --tint: #f2f2f2;
+  --accent: #e30613;
+  --grid: 8px;
+  --small: 12px;
+  --body: 14px;
+  --large: 20px;
+  --sans: "Yu Gothic UI", "Segoe UI", system-ui, sans-serif;
+  --mono: "Cascadia Mono", Consolas, ui-monospace, monospace;
+  color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --base: #1c1c1c;
+    --main: #ececec;
+    --muted: #9a9a9a;
+    --line: #3a3a3a;
+    --tint: #2a2a2a;
+    --accent: #ff3b44;
+  }
+}
+
+* { box-sizing: border-box; }
+
+html, body { height: 100%; margin: 0; }
+
+body {
+  display: flex;
+  flex-direction: column;
+  background: var(--base);
+  color: var(--main);
+  font: var(--body)/1.5 var(--sans);
+}
+
+button, input, select { font: inherit; color: inherit; }
+
+/* The platform's own blue stays out: the accent is for the tab marker. */
+input[type="checkbox"] { accent-color: var(--main); }
+
+/* --- Tabs ----------------------------------------------------------------- */
+
+#tabs {
+  display: flex;
+  gap: calc(var(--grid) * 3);
+  padding: var(--grid) calc(var(--grid) * 3) 0;
+  border-bottom: 1px solid var(--line);
+}
+
+#tabs button {
+  padding: var(--grid) 0;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+#tabs button[aria-selected="true"] {
+  border-bottom-color: var(--accent);
+  color: var(--main);
+  font-weight: 600;
+}
+
+main {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: calc(var(--grid) * 2) calc(var(--grid) * 3);
+}
+
+footer {
+  padding: var(--grid) calc(var(--grid) * 3);
+  border-top: 1px solid var(--line);
+}
+
+footer p { margin: 0; }
+
+#error { color: var(--accent); }
+
+.muted { color: var(--muted); font-size: var(--small); }
+
+.mono { font-family: var(--mono); }
+
+.strong { font-weight: 600; }
+
+.num { text-align: right; font-variant-numeric: tabular-nums; }
+
+/* --- Forms: a heading, then label-left / control-right rows ---------------- */
+
+section + section { margin-top: calc(var(--grid) * 3); }
+
+h2 {
+  margin: 0 0 var(--grid);
+  font-size: var(--small);
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--grid) * 2);
+  min-height: calc(var(--grid) * 5);
+  border-bottom: 1px solid var(--line);
+}
+
+.row > label:first-child, .row > span:first-child { flex: 1; }
+
+.row.check { justify-content: flex-start; }
+
+.row.check label { display: flex; align-items: center; gap: var(--grid); flex: 1; }
+
+select, input[type="text"], input[type="search"], input[type="number"] {
+  height: calc(var(--grid) * 4);
+  padding: 0 var(--grid);
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  background: var(--base);
+}
+
+input[type="number"] { width: calc(var(--grid) * 12); text-align: right; }
+
+/* A flat box and a small ▾ instead of the platform's glossy pop-up button. */
+.select { position: relative; display: inline-block; }
+
+.select select {
+  appearance: none;
+  padding-right: calc(var(--grid) * 4);
+  cursor: pointer;
+}
+
+.select::after {
+  content: "▾";
+  position: absolute;
+  top: 50%;
+  right: var(--grid);
+  transform: translateY(-50%);
+  color: var(--muted);
+  pointer-events: none;
+}
+
+button {
+  height: calc(var(--grid) * 4);
+  padding: 0 calc(var(--grid) * 2);
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  background: var(--tint);
+  cursor: pointer;
+}
+
+button:disabled { opacity: 0.4; cursor: default; }
+
+button.plain { padding: 0 var(--grid); border: 0; background: none; }
+
+button.danger { border-color: var(--accent); color: var(--accent); background: none; }
+
+.bar {
+  display: flex;
+  align-items: center;
+  gap: var(--grid);
+  margin: var(--grid) 0;
+}
+
+.bar .spacer { flex: 1; }
+
+/* --- Key chips --------------------------------------------------------------- */
+
+.keys { display: flex; flex-wrap: wrap; align-items: center; gap: var(--grid); }
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  height: calc(var(--grid) * 3);
+  padding-left: var(--grid);
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  font: var(--small) var(--mono);
+}
+
+.chip button { height: 100%; padding: 0 var(--grid); border: 0; background: none; }
+
+.recording { color: var(--muted); }
+
+/* --- Tables ----------------------------------------------------------------- */
+
+.table { overflow: auto; border: 1px solid var(--line); }
+
+/* The list tabs' one table takes what the window leaves it. */
+.table.fill { flex: 1; min-height: calc(var(--grid) * 16); }
+
+table { width: 100%; border-collapse: collapse; }
+
+th, td {
+  height: calc(var(--grid) * 4);
+  padding: 0 var(--grid);
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  white-space: nowrap;
+}
+
+th {
+  position: sticky;
+  top: 0;
+  background: var(--base);
+  font-size: var(--small);
+  font-weight: 600;
+  color: var(--muted);
+}
+
+th.sortable { cursor: pointer; }
+
+th.num, td.num { text-align: right; }
+
+td.pick, th.pick { width: calc(var(--grid) * 4); }
+
+tr.selected td { background: var(--tint); }
+
+tbody tr { cursor: default; }
+
+/* --- Dialog ------------------------------------------------------------------ */
+
+dialog {
+  width: calc(var(--grid) * 50);
+  padding: calc(var(--grid) * 3);
+  border: 1px solid var(--line);
+  background: var(--base);
+  color: var(--main);
+}
+
+dialog h2 { font-size: var(--large); color: var(--main); font-weight: 600; }
+
+dialog menu { display: flex; justify-content: flex-end; gap: var(--grid); margin: calc(var(--grid) * 3) 0 0; padding: 0; }
