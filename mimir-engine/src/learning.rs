@@ -4,7 +4,7 @@
 //! boosts those candidates on subsequent conversions. Persisted as a
 //! simple TSV file (`reading\tsurface\tfrequency\tlast_access[\tcontexts]`).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, Write};
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -120,6 +120,12 @@ impl Default for LearningConfig {
 ///
 /// Keyed by reading (hiragana). Each reading maps to a list of surface
 /// entries with frequency and recency metadata.
+///
+/// Several processes may hold the same file (Windows runs an engine per
+/// application, plus the settings window's), so the cache also keeps what
+/// it changed since it last read or wrote the file: [`Self::sync`] lays
+/// those changes over whatever another process wrote meanwhile, instead of
+/// writing a stale copy over it.
 #[derive(Debug)]
 pub struct LearningCache {
     entries: HashMap<String, Vec<LearningEntry>>,
@@ -127,6 +133,22 @@ pub struct LearningCache {
     max_surface_chars: usize,
     min_surface_chars: usize,
     dirty: bool,
+    /// The file as last read or written ([`file_stamp`]).
+    stamp: Option<FileStamp>,
+    /// Since then: selections recorded (how many times each),
+    recorded: HashMap<(String, String), u32>,
+    /// pairs removed,
+    removed: HashSet<(String, String)>,
+    /// and whether everything was cleared first.
+    cleared: bool,
+}
+
+/// What tells a file apart from its earlier self: modification time and size.
+type FileStamp = (SystemTime, u64);
+
+fn file_stamp(path: &Path) -> Option<FileStamp> {
+    let meta = std::fs::metadata(path).ok()?;
+    Some((meta.modified().ok()?, meta.len()))
 }
 
 impl LearningCache {
@@ -138,6 +160,18 @@ impl LearningCache {
             max_surface_chars: config.max_surface_chars,
             min_surface_chars: config.min_surface_chars,
             dirty: false,
+            stamp: None,
+            recorded: HashMap::new(),
+            removed: HashSet::new(),
+            cleared: false,
+        }
+    }
+
+    fn config(&self) -> LearningConfig {
+        LearningConfig {
+            max_entries: self.max_entries,
+            max_surface_chars: self.max_surface_chars,
+            min_surface_chars: self.min_surface_chars,
         }
     }
 
@@ -185,7 +219,18 @@ impl LearningCache {
             entry.contexts.insert(0, ctx);
             entry.contexts.truncate(MAX_CONTEXTS);
         }
+        *self
+            .recorded
+            .entry((reading.to_string(), surface.to_string()))
+            .or_default() += 1;
         self.dirty = true;
+    }
+
+    /// Note `reading → surface` as removed since the file was last read.
+    fn note_removed(&mut self, reading: &str, surface: &str) {
+        let key = (reading.to_string(), surface.to_string());
+        self.recorded.remove(&key);
+        self.removed.insert(key);
     }
 
     /// Remove every learned entry that would resurface `surface` for input
@@ -195,20 +240,23 @@ impl LearningCache {
     /// the next conversion. Returns whether anything was removed; persisted
     /// at the next `save`.
     pub fn remove_suggestion(&mut self, reading: &str, surface: &str) -> bool {
-        let mut removed = false;
+        let mut removed = Vec::new();
         self.entries.retain(|r, entries| {
             if !r.starts_with(reading) {
                 return true;
             }
             let before = entries.len();
             entries.retain(|e| e.surface != surface);
-            removed |= entries.len() != before;
+            if entries.len() != before {
+                removed.push(r.clone());
+            }
             !entries.is_empty()
         });
-        if removed {
-            self.dirty = true;
+        for r in &removed {
+            self.note_removed(r, surface);
         }
-        removed
+        self.dirty |= !removed.is_empty();
+        !removed.is_empty()
     }
 
     /// Every entry as `(reading, entry)`, readings sorted — for editing the
@@ -235,6 +283,9 @@ impl LearningCache {
         if entries.is_empty() {
             self.entries.remove(reading);
         }
+        if removed {
+            self.note_removed(reading, surface);
+        }
         self.dirty |= removed;
         removed
     }
@@ -242,6 +293,9 @@ impl LearningCache {
     /// Forget everything.
     pub fn clear(&mut self) {
         self.entries.clear();
+        self.recorded.clear();
+        self.removed.clear();
+        self.cleared = true;
         self.dirty = true;
     }
 
@@ -356,7 +410,62 @@ impl LearningCache {
 
         // Not dirty — just loaded from disk
         cache.dirty = false;
+        cache.stamp = file_stamp(path);
         Ok(cache)
+    }
+
+    /// Bring the cache and `path` in step: when another process wrote the
+    /// file since this cache last read or wrote it, the file becomes the
+    /// base and this cache's own changes since then are laid over it; then
+    /// the changes, if any, are written. Unchanged file and no changes:
+    /// nothing is read or written.
+    pub fn sync(&mut self, path: &Path) -> anyhow::Result<()> {
+        if file_stamp(path) != self.stamp {
+            self.merge_from(path)?;
+        }
+        if self.dirty {
+            self.save(path)?;
+        }
+        Ok(())
+    }
+
+    /// The file's entries (none if it is gone), then this cache's clear,
+    /// removals and records since it last read or wrote the file. A record
+    /// adds its count to the file's frequency and brings its own recency
+    /// and contexts.
+    fn merge_from(&mut self, path: &Path) -> anyhow::Result<()> {
+        let mut base = if path.exists() {
+            Self::load(path, self.config())?
+        } else {
+            Self::new(self.config())
+        };
+        if self.cleared {
+            base.entries.clear();
+        }
+        for (reading, surface) in &self.removed {
+            base.remove(reading, surface);
+        }
+        for ((reading, surface), &count) in &self.recorded {
+            let Some(mine) = self
+                .entries
+                .get(reading)
+                .and_then(|es| es.iter().find(|e| e.surface == *surface))
+            else {
+                continue;
+            };
+            let entries = base.entries.entry(reading.clone()).or_default();
+            let frequency = match entries.iter().position(|e| e.surface == *surface) {
+                Some(i) => entries.remove(i).frequency + count,
+                None => count,
+            };
+            entries.push(LearningEntry {
+                frequency,
+                ..mine.clone()
+            });
+        }
+        self.entries = base.entries;
+        self.stamp = base.stamp;
+        Ok(())
     }
 
     /// Save the cache to a TSV file, evicting low-score entries if over capacity.
@@ -393,7 +502,12 @@ impl LearningCache {
         }
 
         writer.flush()?;
+        drop(writer);
         self.dirty = false;
+        self.stamp = file_stamp(path);
+        self.recorded.clear();
+        self.removed.clear();
+        self.cleared = false;
         Ok(())
     }
 
@@ -808,6 +922,63 @@ mod tests {
         std::fs::write(&path, "でざいn\tデザイn\t3\t0\nでざいん\tデザイン\t1\t0\n").unwrap();
         let loaded = LearningCache::load(&path, LearningConfig::default()).unwrap();
         assert_eq!(loaded.entry_count(), 1);
+    }
+
+    #[test]
+    fn test_sync_keeps_what_another_process_wrote() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("learning.tsv");
+        let mut seed = LearningCache::new(LearningConfig::default());
+        seed.record("きょう", "今日");
+        seed.record("あめ", "雨");
+        seed.save(&path).unwrap();
+
+        // Two engines on the same file: the settings window removes 今日
+        // while an application's engine records 飴 and another 雨.
+        let mut settings = LearningCache::load(&path, LearningConfig::default()).unwrap();
+        let mut app = LearningCache::load(&path, LearningConfig::default()).unwrap();
+        assert!(settings.remove("きょう", "今日"));
+        settings.sync(&path).unwrap();
+        app.record("あめ", "飴");
+        app.record("あめ", "雨");
+        app.sync(&path).unwrap();
+
+        let saved = LearningCache::load(&path, LearningConfig::default()).unwrap();
+        assert!(saved.lookup("きょう").is_empty(), "the removal survives");
+        let freq = |cache: &LearningCache, surface: &str| {
+            cache
+                .entries()
+                .iter()
+                .find(|(_, e)| e.surface == surface)
+                .map(|(_, e)| e.frequency)
+        };
+        assert_eq!(freq(&saved, "飴"), Some(1));
+        assert_eq!(freq(&saved, "雨"), Some(2));
+        assert!(
+            app.lookup("きょう").is_empty(),
+            "the app sees the removal too"
+        );
+
+        // Unchanged since: the settings window takes in the app's records
+        // without writing anything of its own.
+        settings.sync(&path).unwrap();
+        assert_eq!(freq(&settings, "飴"), Some(1));
+        assert!(!settings.is_dirty());
+    }
+
+    #[test]
+    fn test_sync_after_the_file_is_deleted_keeps_only_new_records() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("learning.tsv");
+        let mut cache = LearningCache::new(LearningConfig::default());
+        cache.record("きょう", "今日");
+        cache.save(&path).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        cache.record("あめ", "雨");
+        cache.sync(&path).unwrap();
+        let saved = LearningCache::load(&path, LearningConfig::default()).unwrap();
+        assert_eq!(saved.entry_count(), 1);
+        assert!(saved.lookup("きょう").is_empty());
     }
 
     #[test]
