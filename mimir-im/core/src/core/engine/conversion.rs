@@ -733,6 +733,10 @@ impl InputMethodEngine {
     /// buffer is a `:query`, not a kana reading, and would corrupt the
     /// kana-keyed cache.
     pub(super) fn record_learning(&mut self, reading: &str, surface: &str) {
+        if let Some(pieces) = &mut self.pieces {
+            pieces.picked = true;
+            return;
+        }
         if self.mode.current() == InputMode::Emoji {
             return;
         }
@@ -745,6 +749,12 @@ impl InputMethodEngine {
     /// Record the committed conversion in the learning cache — when it is
     /// not what the window opened on — and end the composition.
     pub(super) fn finish_conversion(&mut self, text: &str, reading: &Option<String>) {
+        let picked = reading.is_some() && text != self.conversion_origin;
+        if let Some(pieces) = &mut self.pieces {
+            pieces.push(reading.as_deref(), text, picked);
+            self.end_composition();
+            return;
+        }
         if let Some(reading) = reading {
             self.record_history(reading, text);
         }
