@@ -1,12 +1,12 @@
 //! The input mode button: あ / A in the taskbar's input indicator, and the
-//! menu its right click opens (設定… starts `mimir-settings.exe`).
+//! menu a click on it opens (設定… starts `mimir-settings.exe`).
 
 use std::cell::RefCell;
 use std::ffi::c_void;
 use std::path::Path;
 use std::rc::Rc;
 
-use windows::Win32::Foundation::{COLORREF, ERROR_SUCCESS, POINT, RECT};
+use windows::Win32::Foundation::{COLORREF, ERROR_SUCCESS, LPARAM, POINT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
     ANTIALIASED_QUALITY, BI_RGB, BITMAPINFO, BITMAPINFOHEADER, CLIP_DEFAULT_PRECIS, CreateBitmap,
     CreateCompatibleDC, CreateDIBSection, CreateFontW, DEFAULT_CHARSET, DIB_RGB_COLORS, DT_CENTER,
@@ -22,7 +22,10 @@ use windows::Win32::UI::TextServices::{
     TF_LBI_TEXT, TfLBIClick,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateIconIndirect, GetSystemMetrics, HICON, ICONINFO, SM_CXSMICON,
+    AppendMenuW, CreateIconIndirect, CreatePopupMenu, CreateWindowExW, DestroyMenu, DestroyWindow,
+    GetSystemMetrics, HICON, ICONINFO, MF_STRING, PostMessageW, SM_CXSMICON, SetForegroundWindow,
+    TPM_BOTTOMALIGN, TPM_NONOTIFY, TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenuEx,
+    WINDOW_EX_STYLE, WM_NULL, WS_POPUP,
 };
 use windows::core::{BOOL, BSTR, GUID, IUnknown, Interface, Ref, Result, implement, w};
 
@@ -110,12 +113,19 @@ impl ITfLangBarItem_Impl for ModeButton_Impl {
 }
 
 impl ITfLangBarItemButton_Impl for ModeButton_Impl {
-    /// ponytail: a left click does nothing yet; switching the mode needs a
+    /// The taskbar's input indicator only reports the click (it never asks
+    /// InitMenu for the menu), so the menu is shown here, left click or right.
+    /// ponytail: a left click doesn't switch the mode yet; that needs a
     /// document to apply the engine's answer to.
-    fn OnClick(&self, _click: TfLBIClick, _pt: &POINT, _area: *const RECT) -> Result<()> {
+    fn OnClick(&self, _click: TfLBIClick, pt: &POINT, _area: *const RECT) -> Result<()> {
+        if unsafe { popup_menu(*pt) }? == MENU_SETTINGS {
+            open_settings();
+        }
         Ok(())
     }
 
+    /// The floating language bar's menu (Windows 7's, or the one still
+    /// shown by the classic language bar setting).
     fn InitMenu(&self, menu: Ref<ITfMenu>) -> Result<()> {
         let label: Vec<u16> = "設定…".encode_utf16().collect();
         unsafe {
@@ -132,10 +142,7 @@ impl ITfLangBarItemButton_Impl for ModeButton_Impl {
 
     fn OnMenuSelect(&self, id: u32) -> Result<()> {
         if id == MENU_SETTINGS {
-            let dll = super::module_path();
-            let settings = Path::new(&dll).with_file_name("mimir-settings.exe");
-            // Nothing to show a failure in from here: the menu is gone.
-            let _ = std::process::Command::new(settings).spawn();
+            open_settings();
         }
         Ok(())
     }
@@ -161,6 +168,47 @@ impl ITfSource_Impl for ModeButton_Impl {
     fn UnadviseSink(&self, _cookie: u32) -> Result<()> {
         self.state.borrow_mut().sink = None;
         Ok(())
+    }
+}
+
+/// `mimir-settings.exe`, installed next to this DLL.
+fn open_settings() {
+    let dll = super::module_path();
+    let settings = Path::new(&dll).with_file_name("mimir-settings.exe");
+    // Nothing to show a failure in from here: the menu is gone.
+    let _ = std::process::Command::new(settings).spawn();
+}
+
+/// The button's menu at `pt` (screen coordinates, above it: the taskbar is
+/// at the bottom); the chosen item's id, 0 for none.
+unsafe fn popup_menu(pt: POINT) -> Result<u32> {
+    unsafe {
+        let menu = CreatePopupMenu()?;
+        AppendMenuW(menu, MF_STRING, MENU_SETTINGS as usize, w!("設定…"))?;
+        // A menu closes on a click elsewhere only when a window of this
+        // thread owning it is in the foreground.
+        let owner = CreateWindowExW(
+            WINDOW_EX_STYLE(0),
+            w!("STATIC"),
+            None,
+            WS_POPUP,
+            0,
+            0,
+            0,
+            0,
+            None,
+            None,
+            None,
+            None,
+        )?;
+        let _ = SetForegroundWindow(owner);
+        let flags = TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTBUTTON | TPM_BOTTOMALIGN;
+        let chosen = TrackPopupMenuEx(menu, flags.0, pt.x, pt.y, owner, None);
+        // Lets the next click after a dismissed menu reach its target.
+        let _ = PostMessageW(Some(owner), WM_NULL, WPARAM(0), LPARAM(0));
+        let _ = DestroyWindow(owner);
+        let _ = DestroyMenu(menu);
+        Ok(chosen.0 as u32)
     }
 }
 
