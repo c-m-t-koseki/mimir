@@ -1,0 +1,28 @@
+[package]
+name = "mimir-settings"
+version = "0.1.0"
+edition.workspace = true
+description = "Settings window for the Mimir Japanese IME on Windows (Tauri)"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+mimir-tsf = { path = ".." }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Windows ships the window; macOS builds it only to try it out (the macOS
+# IME keeps its SwiftUI settings). Linux builds a stub, so the workspace
+# needs no WebKitGTK.
+[target.'cfg(any(windows, target_os = "macos"))'.dependencies]
+tauri = { version = "2", features = [] }
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+[target.'cfg(any(windows, target_os = "macos"))'.dev-dependencies]
+tauri = { version = "2", features = ["test"] }
