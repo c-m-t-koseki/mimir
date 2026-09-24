@@ -11,27 +11,39 @@ $ErrorActionPreference = "Stop"
 # (libclang, for llama.cpp's bindgen), and the WebView2 runtime the settings
 # window draws in. What is missing is installed with winget, after asking once.
 
+# First on this session's PATH, ahead of an older copy elsewhere (a scoop
+# CMake 3.20 knows no Visual Studio 2022).
 function Add-Path($dir) {
-    if ((Test-Path $dir) -and ($env:Path -split ";" -notcontains $dir)) { $env:Path = "$dir;$env:Path" }
+    if (-not (Test-Path $dir)) { return }
+    $rest = $env:Path -split ";" | Where-Object { $_ -and $_ -ne $dir }
+    $env:Path = (@($dir) + $rest) -join ";"
 }
 
+# The newest Visual Studio with the C++ tools (a preview or Build Tools too):
+# its installationPath and installationVersion.
 function Find-VCTools {
     $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
     if (-not (Test-Path $vswhere)) { return $null }
-    & $vswhere -products * -latest -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+    $found = & $vswhere -products * -prerelease -latest -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -format json | ConvertFrom-Json
+    return $found | Select-Object -First 1
 }
 
-# The cmake crate generates for the newest Visual Studio ("Visual Studio 18
-# 2026"), which a CMake older than that Visual Studio doesn't know.
-function Test-CMakeGenerator {
-    # No cmake, or no Visual Studio: the checks for those speak up instead.
-    if (-not (Get-Command cmake -ErrorAction SilentlyContinue)) { return $true }
-    $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
-    if (-not (Test-Path $vswhere)) { return $true }
-    $version = & $vswhere -products * -latest -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationVersion
-    if (-not $version) { return $true }
-    $major = $version.Split(".")[0]
-    return [bool]((cmake --help) -match "Visual Studio $major ")
+# CMake's generator for that Visual Studio ("Visual Studio 18 2026"); $null
+# when this CMake is older than it.
+function Get-CMakeGenerator {
+    $vs = Find-VCTools
+    if (-not $vs -or -not (Get-Command cmake -ErrorAction SilentlyContinue)) { return $null }
+    $major = $vs.installationVersion.Split(".")[0]
+    if (((cmake --help) -join "`n") -match "Visual Studio $major \d{4}") { return $Matches[0] }
+    return $null
+}
+
+# The cmake crate (llama.cpp, aws-lc) picks the newest Visual Studio with an
+# MSBuild, C++ tools or not, and CMake then can't find it ("could not find any
+# instance of Visual Studio"): name the one with the C++ tools instead.
+function Set-CMakeVisualStudio {
+    $env:CMAKE_GENERATOR = Get-CMakeGenerator
+    $env:CMAKE_GENERATOR_INSTANCE = (Find-VCTools).installationPath
 }
 
 function Find-Libclang {
@@ -66,7 +78,7 @@ function Initialize-BuildTools {
     }
     if (-not (Get-Command cmake -ErrorAction SilentlyContinue)) {
         $missing += @{ Name = "CMake"; Id = "Kitware.CMake"; Args = @() }
-    } elseif (-not (Test-CMakeGenerator)) {
+    } elseif ((Find-VCTools) -and -not (Get-CMakeGenerator)) {
         # winget install upgrades a package already installed.
         $missing += @{ Name = "CMake (newer, for this Visual Studio)"; Id = "Kitware.CMake"; Args = @() }
     }
@@ -100,11 +112,13 @@ function Initialize-BuildTools {
         @{ Name = "cargo"; Ok = [bool](Get-Command cargo -ErrorAction SilentlyContinue) },
         @{ Name = "Visual Studio C++ build tools"; Ok = [bool](Find-VCTools) },
         @{ Name = "cmake"; Ok = [bool](Get-Command cmake -ErrorAction SilentlyContinue) },
-        @{ Name = "a cmake that knows this Visual Studio"; Ok = (Test-CMakeGenerator) },
+        @{ Name = "a cmake that knows this Visual Studio"; Ok = [bool](Get-CMakeGenerator) },
         @{ Name = "libclang"; Ok = [bool]$env:LIBCLANG_PATH })) {
         if (-not $check.Ok) { throw "$($check.Name) still not found; open a new PowerShell and run this again." }
     }
+    Set-CMakeVisualStudio
     Write-Host "Build tools ready: $(cargo --version), $(cmake --version | Select-Object -First 1), libclang in $env:LIBCLANG_PATH"
+    Write-Host "CMake builds with $env:CMAKE_GENERATOR in $env:CMAKE_GENERATOR_INSTANCE"
 }
 
 if (-not $Uninstall) {
