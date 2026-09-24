@@ -8,7 +8,7 @@
 //!
 //! | method                 | params                                   | result            |
 //! |------------------------|------------------------------------------|-------------------|
-//! | `init`                 | `{}`                                     | [`InitResult`]    |
+//! | `init`                 | `{}` / `{"models": false}`               | [`InitResult`]    |
 //! | `process_key`          | [`ProcessKeyParams`]                     | [`KeyResult`]     |
 //! | `select_candidate`     | [`SelectCandidateParams`]                | [`KeyResult`]     |
 //! | `commit`               | `{}`                                     | [`KeyResult`]     |
