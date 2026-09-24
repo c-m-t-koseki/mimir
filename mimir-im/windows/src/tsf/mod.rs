@@ -135,12 +135,15 @@ fn register() -> Result<()> {
         let profiles: ITfInputProcessorProfileMgr =
             CoCreateInstance(&CLSID_TF_InputProcessorProfiles, None, CLSCTX_INPROC_SERVER)?;
         let name: Vec<u16> = NAME.encode_utf16().collect();
+        // The icon in the input switcher, installed next to this DLL.
+        let icon = std::path::Path::new(&module_path()).with_file_name("mimir.ico");
+        let icon: Vec<u16> = icon.to_string_lossy().encode_utf16().collect();
         profiles.RegisterProfile(
             &CLSID_MIMIR,
             LANGID_JAPANESE,
             &PROFILE_MIMIR,
             &name,
-            &[],
+            &icon,
             0,
             HKL::default(),
             0,

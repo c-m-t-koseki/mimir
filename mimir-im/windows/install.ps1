@@ -159,6 +159,8 @@ New-Item -ItemType Directory -Force $dest | Out-Null
 Copy-Item "$root\target\release\mimir_tsf.dll" $dest -Force
 Copy-Item "$root\target\release\mimir-imserver.exe" $dest -Force
 Copy-Item "$root\target\release\mimir-settings.exe" $dest -Force
+# The input switcher's icon, which the registration below points at.
+Copy-Item "$root\mimir-im\windows\settings\icons\icon.ico" (Join-Path $dest "mimir.ico") -Force
 
 # The settings window opens from the input indicator's menu (a right click on
 # the mode icon); the Start menu entry is for pinning it too.
