@@ -14,7 +14,7 @@ use crate::core::candidate::CandidateList;
 use crate::core::engine::{EngineAction, EngineConfig, EngineResult, InputMethodEngine};
 use crate::core::keycode::{KeyEvent, Keysym};
 use crate::core::keymap::Keymap;
-use crate::core::part::{PartLayer, PartMode};
+use crate::core::part::{PartLayer, PartMode, Timing};
 use crate::core::state::InputState;
 
 use protocol::{
@@ -126,7 +126,7 @@ impl ImServer {
                 self.key_result(result)
             }
             "refresh" => {
-                let result = self.part.refresh(&self.engine);
+                let result = self.part.refresh(&mut self.engine);
                 self.key_result(result)
             }
             "reset" => {
@@ -149,6 +149,9 @@ impl ImServer {
                     "reading_display": settings.display.reading_display,
                     "tail_delay_ms": settings.display.tail_delay_ms,
                     "tail_delete_delay_ms": settings.display.tail_delete_delay_ms,
+                    "rewrite_hold_ms": settings.display.rewrite_hold_ms,
+                    "commit_guard_ms": settings.display.commit_guard_ms,
+                    "auto_commit_ms": settings.display.auto_commit_ms,
                     "keys": settings.keys,
                     "predictive": settings.conversion.predictive,
                     "skk_style": settings.conversion.skk_style,
@@ -316,6 +319,11 @@ fn part_layer(settings: &Settings) -> PartLayer {
             settings.display.tail_delay_ms,
             settings.display.tail_delete_delay_ms,
         )
+        .with_timing(Timing {
+            rewrite_hold_ms: settings.display.rewrite_hold_ms,
+            commit_guard_ms: settings.display.commit_guard_ms,
+            auto_commit_ms: settings.display.auto_commit_ms,
+        })
 }
 
 /// Settings only the part layer and the key results read: `set_config`
@@ -331,6 +339,9 @@ fn applies_live(section: &str, key: &str) -> bool {
                 | "tail_chars"
                 | "tail_delay_ms"
                 | "tail_delete_delay_ms"
+                | "rewrite_hold_ms"
+                | "commit_guard_ms"
+                | "auto_commit_ms"
                 | "candidate_layout"
         ),
         "conversion" => key == "skk_style",

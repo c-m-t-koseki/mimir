@@ -29,6 +29,8 @@
 //! reaching the application), and Enter saves it — to the learning cache
 //! for immediate effect and to `user_dicts/registered.tsv` for good.
 
+use std::time::{Duration, Instant};
+
 use super::engine::{EngineAction, EngineResult, InputMethodEngine};
 use super::keycode::{KeyEvent, KeyModifiers, Keysym};
 use super::keymap::Keymap;
@@ -42,6 +44,10 @@ const RECENT_MAX_CHARS: usize = 12;
 
 /// Completions listed in the hint panel.
 const HINT_COMPLETIONS: usize = 3;
+
+/// A frontend's timer fires about when asked, never exactly: this much
+/// early still counts as due.
+const TIMER_SLACK: Duration = Duration::from_millis(30);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PartMode {
@@ -81,6 +87,16 @@ pub struct PartLayer {
     deleted: Option<bool>,
     /// Typing paused (`refresh`): the tail shows converted too.
     settled: bool,
+    /// The waits the layer keeps on its own (`[display]`).
+    timing: Timing,
+    /// When the last key came.
+    last_key: Instant,
+    /// When the layer last rewrote the preedit on its own (the tail
+    /// converted on a pause).
+    rewritten_at: Option<Instant>,
+    /// What showed before that rewrite, until the next key: a commit
+    /// arriving right after it takes this instead.
+    before_rewrite: Option<String>,
     /// SKK style: only a capital opens a part. The layer's own default
     /// (its tests are written for it); `[conversion] skk_style` sets it.
     skk_style: bool,
@@ -95,6 +111,29 @@ pub struct PartLayer {
 struct Registration {
     reading: String,
     word: String,
+}
+
+/// The waits of `[display]` beyond the tail's: see `DisplaySettings`.
+#[derive(Debug, Clone, Copy)]
+pub struct Timing {
+    pub rewrite_hold_ms: u64,
+    pub commit_guard_ms: u64,
+    /// 0: never.
+    pub auto_commit_ms: u64,
+}
+
+impl Timing {
+    /// Nothing held, guarded or committed on its own: what the tests of
+    /// everything else assume.
+    const OFF: Self = Self {
+        rewrite_hold_ms: 0,
+        commit_guard_ms: 0,
+        auto_commit_ms: 0,
+    };
+}
+
+fn ms(ms: u64) -> Duration {
+    Duration::from_millis(ms)
 }
 
 /// The part right of the caret: its reading, and that converted on its own
@@ -153,6 +192,10 @@ impl PartLayer {
             tail_delete_delay_ms: 600,
             deleted: None,
             settled: false,
+            timing: Timing::OFF,
+            last_key: Instant::now(),
+            rewritten_at: None,
+            before_rewrite: None,
             register: None,
             recent: None,
         }
@@ -192,6 +235,10 @@ impl PartLayer {
             && composing(engine)
             && !engine.has_pending_romaji()
             && self.deleted != Some(true)
+    }
+
+    pub fn with_timing(self, timing: Timing) -> Self {
+        Self { timing, ..self }
     }
 
     pub fn with_keys(self, keys: Keymap) -> Self {
@@ -254,13 +301,21 @@ impl PartLayer {
             return self.discard(engine);
         }
         if key.is_press && !key.keysym.is_modifier() {
-            self.settled = false;
+            // Right after the tail converted on its own, a key keeps it so.
+            self.settled &= self
+                .rewritten_at
+                .is_some_and(|at| at.elapsed() < ms(self.timing.rewrite_hold_ms));
+            self.last_key = Instant::now();
             self.deleted = (key.keysym == Keysym::BACKSPACE
                 && self.mode == PartMode::Part
                 && self::composing(engine))
             .then(|| deletes_a_lone_kana(engine));
         }
         let result = self.dispatch(engine, key);
+        // What showed before the rewrite matters for this key only.
+        if key.is_press && !key.keysym.is_modifier() {
+            self.before_rewrite = None;
+        }
         self.learn_pick(engine);
         let mut result = plain_aux(engine, result);
         self.decorate(engine, &mut result);
@@ -325,29 +380,102 @@ impl PartLayer {
         }
     }
 
-    /// Typing paused: redraw the preedit with nothing held back in kana.
-    pub fn refresh(&mut self, engine: &InputMethodEngine) -> EngineResult {
-        self.settled = true;
-        let Some(preedit) = engine
+    /// Typing paused: what is due now — the tail held back in kana
+    /// converts, or, left alone long enough, the part commits.
+    pub fn refresh(&mut self, engine: &mut InputMethodEngine) -> EngineResult {
+        if self.holds_tail(engine) {
+            return self.settle_tail(engine);
+        }
+        if self
+            .auto_commit_at(engine)
+            .is_some_and(|at| at <= Instant::now() + TIMER_SLACK)
+        {
+            let result = self.close(engine);
+            self.enter(engine, PartMode::Plain);
+            return result;
+        }
+        EngineResult::consumed()
+    }
+
+    /// Redraw the preedit with nothing held back in kana.
+    fn settle_tail(&mut self, engine: &InputMethodEngine) -> EngineResult {
+        let before = engine
             .preedit()
-            .filter(|_| self.mode == PartMode::Part && composing(engine))
-        else {
+            .and_then(|p| kana_tail_preedit(&engine.reading(), p.text(), self.tail_chars))
+            .map(|p| p.text().to_string());
+        self.settled = true;
+        let Some(preedit) = engine.preedit() else {
             return EngineResult::consumed();
         };
+        if before.as_deref().is_some_and(|b| b != preedit.text()) {
+            self.rewritten_at = Some(Instant::now());
+            self.before_rewrite = before;
+        }
         let mut result =
             EngineResult::consumed().with_action(EngineAction::UpdatePreedit(preedit.clone()));
         self.decorate(engine, &mut result);
         result
     }
 
-    /// When the frontend should call [`Self::refresh`]: after this long
-    /// without a key, while a kana tail is held back.
+    /// When a part left alone commits on its own: typed into and composing
+    /// only — not with the candidate window open, cut at the caret, an
+    /// unfired consonant, abbrev input or a registration — and never
+    /// sooner than the hold after a rewrite.
+    fn auto_commit_at(&self, engine: &InputMethodEngine) -> Option<Instant> {
+        let t = self.timing;
+        let idle = t.auto_commit_ms > 0
+            && self.mode == PartMode::Part
+            && composing(engine)
+            && self.split.is_none()
+            && !self.abbrev
+            && self.register.is_none()
+            && !engine.has_pending_romaji();
+        if !idle {
+            return None;
+        }
+        let at = self.last_key + ms(t.auto_commit_ms);
+        Some(match self.rewritten_at {
+            Some(rewritten) => at.max(rewritten + ms(t.rewrite_hold_ms)),
+            None => at,
+        })
+    }
+
+    /// When the frontend should call [`Self::refresh`], from now: while a
+    /// kana tail is held back, the pause after the last key; then, when the
+    /// part would commit on its own.
     pub fn refresh_after_ms(&self, engine: &InputMethodEngine) -> Option<u64> {
-        let delay = match self.deleted {
-            Some(_) => self.tail_delete_delay_ms,
-            None => self.tail_delay_ms,
+        let due = if self.holds_tail(engine) {
+            let delay = match self.deleted {
+                Some(_) => self.tail_delete_delay_ms,
+                None => self.tail_delay_ms,
+            };
+            self.last_key + ms(delay)
+        } else {
+            self.auto_commit_at(engine)?
         };
-        self.holds_tail(engine).then_some(delay)
+        Some(due.saturating_duration_since(Instant::now()).as_millis() as u64)
+    }
+
+    /// A commit right after the layer rewrote the preedit on its own: what
+    /// showed before the rewrite is what goes in (the user was looking at
+    /// that when they pressed the key).
+    fn guarded_commit(&mut self, engine: &mut InputMethodEngine) -> Option<EngineResult> {
+        let recent = self
+            .rewritten_at
+            .is_some_and(|at| at.elapsed() < ms(self.timing.commit_guard_ms));
+        if !recent || self.split.is_some() || !composing(engine) {
+            return None;
+        }
+        let text = self.before_rewrite.take()?;
+        let reading = engine.take_reading();
+        engine.note_commit(&reading, &text);
+        self.note_recent(reading, text.clone());
+        Some(
+            EngineResult::consumed()
+                .with_action(EngineAction::Commit(text))
+                .with_action(EngineAction::HideCandidates)
+                .with_action(EngineAction::HideAuxText),
+        )
     }
 
     /// `ReadingDisplay::Ruby`: the last kanji run of the preedit — its span
@@ -708,6 +836,13 @@ impl PartLayer {
     fn part_key(&mut self, engine: &mut InputMethodEngine, key: &KeyEvent) -> EngineResult {
         if self.abbrev {
             return self.abbrev_key(engine, key);
+        }
+        let k = &self.keys;
+        if (k.commit.hit(key) || k.close.hit(key) || k.end_commit.hit(key))
+            && let Some(result) = self.guarded_commit(engine)
+        {
+            self.enter(engine, PartMode::Plain);
+            return result;
         }
         let k = &self.keys;
         if k.convert.hit(key) {
@@ -1560,6 +1695,109 @@ mod tests {
         assert_eq!(engine.reading(), "いいてんき");
         assert_eq!(feed(&mut layer, &mut engine, " "), "いいてんき");
         assert_eq!(layer.mode(), PartMode::Plain);
+    }
+
+    /// A layer showing the typed tail in kana, with `timing`, and an engine
+    /// that converts てんき(が) to 天気(が) after 昨日は without a model.
+    fn tail_setup(tail_chars: usize, timing: Timing) -> (PartLayer, InputMethodEngine) {
+        let mut engine = InputMethodEngine::new();
+        engine_learning_on(&mut engine);
+        engine.set_surrounding_context("昨日は", "");
+        engine.learn_after("てんき", "天気", "");
+        engine.learn_after("てんきが", "天気が", "");
+        let mut layer = PartLayer::new()
+            .with_reading_display(ReadingDisplay::Tail, tail_chars, 250, 600)
+            .with_timing(timing);
+        layer.attach(&mut engine);
+        (layer, engine)
+    }
+
+    fn refreshed(layer: &mut PartLayer, engine: &mut InputMethodEngine) -> Option<String> {
+        layer
+            .refresh(engine)
+            .actions
+            .into_iter()
+            .find_map(|a| match a {
+                EngineAction::UpdatePreedit(p) => Some(p.text().to_string()),
+                _ => None,
+            })
+    }
+
+    #[test]
+    fn a_commit_right_after_the_tail_converts_takes_what_showed_before() {
+        let guarded = Timing {
+            commit_guard_ms: 60_000,
+            ..Timing::OFF
+        };
+        let (mut layer, mut engine) = tail_setup(1, guarded);
+        feed(&mut layer, &mut engine, "Tenk");
+        assert_eq!(
+            shown(&mut layer, &mut engine, &press_char('i')),
+            Some(("てんき".into(), 3))
+        );
+        assert_eq!(refreshed(&mut layer, &mut engine).as_deref(), Some("天気"));
+        let result = layer.process_key(&mut engine, &press(Keysym::RETURN));
+        assert_eq!(commits(&result), "てんき");
+        assert_eq!(layer.mode(), PartMode::Plain);
+        // Unguarded, what the rewrite shows commits.
+        let (mut layer, mut engine) = tail_setup(1, Timing::OFF);
+        feed(&mut layer, &mut engine, "Tenki");
+        refreshed(&mut layer, &mut engine);
+        let result = layer.process_key(&mut engine, &press(Keysym::RETURN));
+        assert_eq!(commits(&result), "天気");
+    }
+
+    #[test]
+    fn keys_right_after_the_tail_converts_keep_it_converted() {
+        let held = Timing {
+            rewrite_hold_ms: 60_000,
+            ..Timing::OFF
+        };
+        let (mut layer, mut engine) = tail_setup(2, held);
+        feed(&mut layer, &mut engine, "Tenki");
+        assert_eq!(refreshed(&mut layer, &mut engine).as_deref(), Some("天気"));
+        feed(&mut layer, &mut engine, "g");
+        assert_eq!(
+            shown(&mut layer, &mut engine, &press_char('a')),
+            Some(("天気が".into(), 3))
+        );
+        // Without the hold, the last two typed go back to kana.
+        let (mut layer, mut engine) = tail_setup(2, Timing::OFF);
+        feed(&mut layer, &mut engine, "Tenki");
+        refreshed(&mut layer, &mut engine);
+        feed(&mut layer, &mut engine, "g");
+        assert_eq!(
+            shown(&mut layer, &mut engine, &press_char('a')),
+            Some(("てんきが".into(), 4))
+        );
+    }
+
+    #[test]
+    fn a_part_left_alone_commits_on_its_own() {
+        let quick = Timing {
+            auto_commit_ms: 1,
+            ..Timing::OFF
+        };
+        let (layer, mut engine) = setup();
+        let mut layer = layer.with_timing(quick);
+        feed(&mut layer, &mut engine, "Kaigi");
+        assert!(layer.refresh_after_ms(&engine).is_some());
+        std::thread::sleep(Duration::from_millis(5));
+        assert_eq!(commits(&layer.refresh(&mut engine)), "かいぎ");
+        assert_eq!(layer.mode(), PartMode::Plain);
+        // Not with the candidate window open, nor on an unfired consonant.
+        feed(&mut layer, &mut engine, "Kaigi");
+        layer.process_key(&mut engine, &ctrl('n'));
+        assert_eq!(layer.refresh_after_ms(&engine), None);
+        std::thread::sleep(Duration::from_millis(5));
+        assert_eq!(commits(&layer.refresh(&mut engine)), "");
+        layer.process_key(&mut engine, &ctrl('g'));
+        feed(&mut layer, &mut engine, "k");
+        assert_eq!(layer.refresh_after_ms(&engine), None);
+        // Off by default.
+        let (mut layer, mut engine) = setup();
+        feed(&mut layer, &mut engine, "Kaigi");
+        assert_eq!(layer.refresh_after_ms(&engine), None);
     }
 
     #[test]
