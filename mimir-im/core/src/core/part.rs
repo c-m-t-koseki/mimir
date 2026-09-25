@@ -803,11 +803,23 @@ impl PartLayer {
                 self.abbrev = true;
                 return EngineResult::consumed();
             }
-            if z_sequence(engine, ch) {
+            // A z sequence typed on its own is a symbol, not a word: outside
+            // SKK style too, `z` waits in plain input, and only a key making
+            // it kana (za → ざ) opens the part, `z` and all.
+            let lone_z = !self.skk_style && engine.pending_romaji() == "z";
+            if z_sequence(engine, ch) || (lone_z && Z_SEQUENCE_KEYS.contains(ch)) {
                 let result = without_suggestions(engine.feed_romaji(ch));
                 let result = merge(result, engine.commit_plain_result());
                 self.note_plain_commits(&result);
                 return result;
+            }
+            if lone_z {
+                engine.take_reading();
+                let result = self.start_part(engine, Some('z'));
+                return merge(result, self.part_key(engine, key));
+            }
+            if !self.skk_style && ch == 'z' && matches!(engine.state(), InputState::Empty) {
+                return without_suggestions(engine.process_key(key));
             }
             if let Some(first) = part_opener(key, ch) {
                 return self.start_part(engine, first);
@@ -1220,6 +1232,9 @@ fn typed_char(key: &KeyEvent) -> Option<char> {
 
 /// A key the layer would take as a command (`l`, Space, `,`, `.`) that
 /// instead completes a pending `z` sequence: zl → →, z + Space → 　, ….
+/// What follows `z` in the z sequences (zh ← / zl → / z. … / z+Space …).
+const Z_SEQUENCE_KEYS: &str = "hjkl ,./-";
+
 fn z_sequence(engine: &InputMethodEngine, ch: char) -> bool {
     matches!(ch, 'l' | ' ' | ',' | '.') && engine.pending_romaji() == "z"
 }
@@ -1566,6 +1581,27 @@ mod tests {
         assert_eq!(feed(&mut layer, &mut engine, " "), "かいぎ");
         assert_eq!(layer.mode(), PartMode::Plain);
         assert_eq!(feed(&mut layer, &mut engine, "ha"), "は");
+    }
+
+    #[test]
+    fn z_sequences_alone_stay_out_of_a_part_without_skk_style() {
+        let (layer, mut engine) = setup();
+        let mut layer = layer.with_skk_style(false);
+        for (keys, symbol) in [
+            ("zl", "→"),
+            ("zh", "←"),
+            ("z.", "…"),
+            ("z/", "・"),
+            ("z ", "\u{3000}"),
+        ] {
+            assert_eq!(feed(&mut layer, &mut engine, keys), symbol, "{keys}");
+            assert_eq!(layer.mode(), PartMode::Plain, "{keys}");
+        }
+        // A kana from z opens the part as usual.
+        assert_eq!(feed(&mut layer, &mut engine, "za"), "");
+        assert_eq!(layer.mode(), PartMode::Part);
+        assert_eq!(engine.reading(), "ざ");
+        assert_eq!(feed(&mut layer, &mut engine, "zl "), "ざ→");
     }
 
     #[test]
