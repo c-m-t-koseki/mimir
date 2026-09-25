@@ -56,6 +56,7 @@ Honjitu no Kaigi ha  →  本日の会議は
 | パートを取り消す | Ctrl+G / Escape |
 | 単語登録 | Ctrl+R → 語を入力 → Enter（Ctrl+G で中止） |
 | 変換する範囲を決める（カーソルより左だけ変換） | Ctrl+B / Ctrl+F / Ctrl+A / Ctrl+E（← → Home End も可） |
+| カーソルが末尾にあるとき、すべて確定（Enter と同じ） | Ctrl+F / Ctrl+E（`[keys] end_commit`） |
 
 Google 日本語入力と同じ `z` 入力が使える（zh ← / zj ↓ / zk ↑ / zl → / z. … / z, ‥ / z/ ・ / z- 〜 / z+Space 全角スペース）。`z` の直後の `l`・Space・`,` `.` は、英数への切り替えやパートの終了ではなく、この入力として扱う。
 
