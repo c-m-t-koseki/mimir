@@ -129,6 +129,18 @@ impl InputMethodEngine {
             candidates.insert(0, AnnotatedCandidate::new(prev_suggest_text, source));
         }
 
+        // A reading with romaji stranded between kana (ございmす) is a typo:
+        // what one keystroke more or less makes of it, right after the first
+        // candidate — offered, never put in place of what was typed.
+        let seen: HashSet<String> = candidates.iter().map(|c| c.text.clone()).collect();
+        let retyped: Vec<AnnotatedCandidate> = self
+            .retyped_candidates(&reading)
+            .into_iter()
+            .filter(|c| !seen.contains(&c.text))
+            .collect();
+        let at = candidates.len().min(1);
+        candidates.splice(at..at, retyped);
+
         if candidates.is_empty() {
             // No candidates: stay composing, untouched (emoji queries with
             // no match land here)
@@ -792,6 +804,24 @@ impl InputMethodEngine {
         }
     }
 
+    /// [`retypings`] of `reading`, each converted as the model would (or
+    /// as kana without it), marked with the reading it stands for.
+    fn retyped_candidates(&mut self, reading: &str) -> Vec<AnnotatedCandidate> {
+        retypings(reading, &self.converters.romaji)
+            .into_iter()
+            .map(|retyped| {
+                let text = self
+                    .model_candidates(&retyped, 1)
+                    .into_iter()
+                    .next()
+                    .unwrap_or_else(|| retyped.clone());
+                AnnotatedCandidate::new(text, CandidateSource::Model)
+                    .with_description(Some(format!("打ち直し: {retyped}")))
+                    .with_reading(Some(retyped))
+            })
+            .collect()
+    }
+
     /// Commit the current conversion
     fn commit_conversion(&mut self) -> EngineResult {
         let Some((text, reading)) = self.selected_conversion_info() else {
@@ -971,4 +1001,35 @@ impl InputMethodEngine {
             .with_action(EngineAction::ShowCandidates(candidates))
             .with_action(EngineAction::UpdateAuxText(aux))
     }
+}
+
+/// Readings one keystroke away from `reading` where it strands lowercase
+/// romaji between kana (ございmす: masu typed msu): the stray letters with a
+/// vowel after them, or without them. Only for a single stray run with kana
+/// after it (a run at the end is still being typed); each result is all
+/// kana.
+pub(super) fn retypings(reading: &str, romaji: &mimir_engine::RomajiConverter) -> Vec<String> {
+    let chars: Vec<char> = reading.chars().collect();
+    let stray = |c: &char| c.is_ascii_lowercase();
+    let Some(start) = chars.iter().position(stray) else {
+        return Vec::new();
+    };
+    let end = start + chars[start..].iter().take_while(|c| stray(c)).count();
+    if end == chars.len() || chars[end..].iter().any(stray) {
+        return Vec::new();
+    }
+    let head: String = chars[..start].iter().collect();
+    let letters: String = chars[start..end].iter().collect();
+    let tail: String = chars[end..].iter().collect();
+    let mut out: Vec<String> = Vec::new();
+    for vowel in ['a', 'i', 'u', 'e', 'o'] {
+        let converted = romaji.convert(&format!("{letters}{vowel}"));
+        if converted.pending.is_empty() && !converted.text.chars().any(|c| c.is_ascii_alphabetic())
+        {
+            out.push(format!("{head}{}{tail}", converted.text));
+        }
+    }
+    out.push(format!("{head}{tail}"));
+    out.dedup();
+    out
 }

@@ -289,3 +289,42 @@ fn test_shift_space_steps_back_a_candidate() {
     assert!(matches!(engine.state(), InputState::Conversion { .. }));
     assert!(committed(&result).is_none(), "Shift+Space must not commit");
 }
+
+#[test]
+fn romaji_stranded_between_kana_is_retyped_one_keystroke_away() {
+    let engine = InputMethodEngine::new();
+    let romaji = &engine.converters.romaji;
+    assert_eq!(
+        super::super::conversion::retypings("ございmす", romaji),
+        [
+            "ございます",
+            "ございみす",
+            "ございむす",
+            "ございめす",
+            "ございもす",
+            "ございす"
+        ]
+    );
+    // Still being typed, or letters meant as letters: nothing.
+    assert!(super::super::conversion::retypings("ございm", romaji).is_empty());
+    assert!(super::super::conversion::retypings("ございます", romaji).is_empty());
+}
+
+#[test]
+fn a_typo_offers_the_retyped_reading_next_to_what_was_typed() {
+    let mut engine = InputMethodEngine::new();
+    for ch in "gozaimsu".chars() {
+        engine.process_key(&press(ch));
+    }
+    assert_eq!(engine.input_buf.reading(), "ございmす");
+    engine.process_key(&press_key(Keysym::SPACE));
+    let candidates = engine.state().candidates().unwrap().candidates().to_vec();
+    // What was typed stays first; the retyping follows, marked.
+    assert_eq!(candidates[0].text, "ございmす");
+    assert_eq!(candidates[1].text, "ございます");
+    assert_eq!(
+        candidates[1].description.as_deref(),
+        Some("打ち直し: ございます")
+    );
+    assert_eq!(candidates[1].reading.as_deref(), Some("ございます"));
+}
