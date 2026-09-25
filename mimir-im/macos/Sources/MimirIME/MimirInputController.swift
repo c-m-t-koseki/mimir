@@ -178,6 +178,9 @@ class MimirInputController: IMKInputController {
             guard let self, let result = engineClient.refreshSync() else { return }
             self.apply(actions: result.actions, client: client)
             self.showRuby(result.ruby, client: client)
+            self.showHint(result.hint, client: client)
+            // The tail converted: the part may still commit on its own later.
+            self.scheduleRefresh(after: result.refreshMs, client: client)
         }
         refreshWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(ms), execute: work)

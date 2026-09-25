@@ -50,6 +50,9 @@ const FIELDS = {
   reading_display: ["display", "reading_display"],
   tail_delay_ms: ["display", "tail_delay_ms"],
   tail_delete_delay_ms: ["display", "tail_delete_delay_ms"],
+  rewrite_hold_ms: ["display", "rewrite_hold_ms"],
+  commit_guard_ms: ["display", "commit_guard_ms"],
+  auto_commit_ms: ["display", "auto_commit_ms"],
   predictive: ["conversion", "predictive"],
   skk_style: ["conversion", "skk_style"],
   model: ["conversion", "model"],
@@ -167,7 +170,8 @@ function renderGeneral(page) {
   const tail = c.reading_display === "tail";
   page.append(
     section("操作",
-      toggle("SKK 式の入力（大文字で漢字の変換を始め、小文字は平仮名で確定）", c.skk_style, set("skk_style"))),
+      toggle("SKK 式の入力（大文字で漢字の変換を始め、小文字は平仮名で確定）", c.skk_style, set("skk_style")),
+      stepper("手を止めたら確定するまで（0 でしない）", c.auto_commit_ms, 0, 5000, 100, set("auto_commit_ms"))),
     section("表示",
       choice("変換中の読み", c.reading_display, [
         ["tail", "末尾1字を平仮名で残す"],
@@ -177,6 +181,8 @@ function renderGeneral(page) {
       ], async (value) => { await settings.field("reading_display", value); render(); }),
       tail && stepper("手を止めてから変換するまで", c.tail_delay_ms, 50, 1000, 50, set("tail_delay_ms")),
       tail && stepper("削除のあと変換するまで", c.tail_delete_delay_ms, 50, 2000, 50, set("tail_delete_delay_ms")),
+      tail && stepper("変換して出したあと、平仮名に戻さない", c.rewrite_hold_ms, 0, 1000, 50, set("rewrite_hold_ms")),
+      tail && stepper("変換して出した直後の確定は、前の表示で", c.commit_guard_ms, 0, 1000, 50, set("commit_guard_ms")),
       choice("候補窓を出す", c.candidate_window, [
         ["conversion", "変換を始めてから（Ctrl+N など）"],
         ["always", "入力中から常に"],

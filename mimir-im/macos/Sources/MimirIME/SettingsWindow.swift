@@ -13,6 +13,9 @@ final class SettingsModel: ObservableObject {
     @Published var readingDisplay = "tail"
     @Published var tailDelayMs = 250
     @Published var tailDeleteDelayMs = 600
+    @Published var rewriteHoldMs = 250
+    @Published var commitGuardMs = 250
+    @Published var autoCommitMs = 1000
     @Published var predictive = false
     @Published var skkStyle = false
     @Published var model = ""
@@ -43,6 +46,9 @@ final class SettingsModel: ObservableObject {
         readingDisplay = config["reading_display"] as? String ?? readingDisplay
         tailDelayMs = config["tail_delay_ms"] as? Int ?? tailDelayMs
         tailDeleteDelayMs = config["tail_delete_delay_ms"] as? Int ?? tailDeleteDelayMs
+        rewriteHoldMs = config["rewrite_hold_ms"] as? Int ?? rewriteHoldMs
+        commitGuardMs = config["commit_guard_ms"] as? Int ?? commitGuardMs
+        autoCommitMs = config["auto_commit_ms"] as? Int ?? autoCommitMs
         predictive = config["predictive"] as? Bool ?? predictive
         skkStyle = config["skk_style"] as? Bool ?? skkStyle
         model = config["model"] as? String ?? model
@@ -58,6 +64,9 @@ final class SettingsModel: ObservableObject {
             "display.candidate_window": candidateWindow,
             "display.reading_display": readingDisplay, "display.tail_delay_ms": "\(tailDelayMs)",
             "display.tail_delete_delay_ms": "\(tailDeleteDelayMs)",
+            "display.rewrite_hold_ms": "\(rewriteHoldMs)",
+            "display.commit_guard_ms": "\(commitGuardMs)",
+            "display.auto_commit_ms": "\(autoCommitMs)",
             "conversion.predictive": "\(predictive)",
             "conversion.skk_style": "\(skkStyle)",
             "conversion.model": model, "conversion.light_model": lightModel,
@@ -313,6 +322,12 @@ struct GeneralTab: View {
             Section("操作") {
                 Toggle("SKK 式の入力（大文字で漢字の変換を始め、小文字は平仮名で確定）", isOn: $model.skkStyle)
                     .onChange(of: model.skkStyle) { model.set("conversion", "skk_style", $0) }
+                Stepper(
+                    model.autoCommitMs == 0
+                        ? "手を止めたら確定: しない" : "手を止めたら確定: \(model.autoCommitMs) ミリ秒後",
+                    value: $model.autoCommitMs, in: 0...5000, step: 100
+                )
+                .onChange(of: model.autoCommitMs) { model.set("display", "auto_commit_ms", $0) }
             }
             Section("表示") {
                 Picker("変換中の読み", selection: $model.readingDisplay) {
@@ -333,6 +348,16 @@ struct GeneralTab: View {
                         value: $model.tailDeleteDelayMs, in: 50...2000, step: 50
                     )
                     .onChange(of: model.tailDeleteDelayMs) { model.set("display", "tail_delete_delay_ms", $0) }
+                    Stepper(
+                        "変換して出したあと、平仮名に戻さない: \(model.rewriteHoldMs) ミリ秒",
+                        value: $model.rewriteHoldMs, in: 0...1000, step: 50
+                    )
+                    .onChange(of: model.rewriteHoldMs) { model.set("display", "rewrite_hold_ms", $0) }
+                    Stepper(
+                        "変換して出した直後の確定は、前の表示で: \(model.commitGuardMs) ミリ秒",
+                        value: $model.commitGuardMs, in: 0...1000, step: 50
+                    )
+                    .onChange(of: model.commitGuardMs) { model.set("display", "commit_guard_ms", $0) }
                 }
                 Picker("候補窓を出す", selection: $model.candidateWindow) {
                     Text("変換を始めてから（Ctrl+N など）").tag("conversion")
