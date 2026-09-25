@@ -190,6 +190,15 @@ pub struct DisplaySettings {
     pub tail_delay_ms: u64,
     /// The same pause after a deletion, longer: deleting goes on in bursts
     pub tail_delete_delay_ms: u64,
+    /// After the layer rewrote the preedit on its own (the tail converted
+    /// on a pause), keys this soon keep it converted instead of taking the
+    /// tail back to kana
+    pub rewrite_hold_ms: u64,
+    /// A commit this soon after such a rewrite commits what showed before
+    /// it: what was seen is what goes in
+    pub commit_guard_ms: u64,
+    /// A part typed into and left alone this long commits (0: never)
+    pub auto_commit_ms: u64,
 }
 
 /// Candidates one per row, or each where its select key is on the
