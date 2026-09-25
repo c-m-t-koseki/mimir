@@ -460,3 +460,40 @@ fn space_key_keeps_learning_in_composing() {
         texts,
     );
 }
+
+/// Type `keys`, open the window, and commit what it opened on.
+fn commit_first(engine: &mut InputMethodEngine, keys: &str) -> String {
+    for ch in keys.chars() {
+        engine.process_key(&press(ch));
+    }
+    engine.process_key(&press_key(Keysym::SPACE));
+    engine.commit()
+}
+
+fn learned_for(engine: &InputMethodEngine, reading: &str) -> Vec<String> {
+    let cache = engine.learning.as_ref().unwrap();
+    cache.lookup(reading).into_iter().map(|(s, _)| s).collect()
+}
+
+#[test]
+fn a_learned_pick_the_model_now_gives_is_retired() {
+    let mut engine = engine_with_learned("あい", "藍");
+    seed_model_cache(&mut engine, "アイ", "", &["藍"]);
+    assert_eq!(commit_first(&mut engine, "ai"), "藍");
+    assert!(learned_for(&engine, "あい").is_empty());
+}
+
+#[test]
+fn a_learned_pick_the_model_does_not_give_stays() {
+    let mut engine = engine_with_learned("あい", "藍");
+    seed_model_cache(&mut engine, "アイ", "", &["愛"]);
+    assert_eq!(commit_first(&mut engine, "ai"), "藍");
+    assert_eq!(learned_for(&engine, "あい"), ["藍"]);
+    // Nor when it is what ranks the reading above another learned one.
+    let mut engine = engine_with_learned("あい", "藍");
+    engine.learning.as_mut().unwrap().record("あい", "愛");
+    engine.learning.as_mut().unwrap().record("あい", "藍");
+    seed_model_cache(&mut engine, "アイ", "", &["藍"]);
+    assert_eq!(commit_first(&mut engine, "ai"), "藍");
+    assert_eq!(learned_for(&engine, "あい").len(), 2);
+}
