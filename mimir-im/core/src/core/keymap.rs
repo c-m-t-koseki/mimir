@@ -41,6 +41,8 @@ pub struct KeysSettings {
     pub right: String,
     pub home: String,
     pub end: String,
+    /// Commit everything, when nothing is right of the caret
+    pub end_commit: String,
     /// The keys picking a candidate from the window, in page order
     pub select: String,
 }
@@ -170,6 +172,7 @@ pub struct Keymap {
     pub right: Keys,
     pub home: Keys,
     pub end: Keys,
+    pub end_commit: Keys,
     pub select: Vec<char>,
 }
 
@@ -207,6 +210,7 @@ impl Keymap {
             right: Keys::parse(&s.right)?,
             home: Keys::parse(&s.home)?,
             end: Keys::parse(&s.end)?,
+            end_commit: Keys::parse(&s.end_commit)?,
             select,
         })
     }
@@ -231,6 +235,7 @@ impl Keymap {
             &self.right,
             &self.home,
             &self.end,
+            &self.end_commit,
         ]
         .iter()
         .any(|keys| keys.hit(key))

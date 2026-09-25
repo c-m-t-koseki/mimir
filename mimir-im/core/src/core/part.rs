@@ -726,6 +726,11 @@ impl PartLayer {
         if k.complete.hit(key) {
             return engine.open_completions();
         }
+        if self.at_end_commit(key) && composing(engine) {
+            let result = self.close(engine);
+            self.enter(engine, PartMode::Plain);
+            return result;
+        }
         if let Some(to) = self.split_move(key).filter(|_| composing(engine)) {
             return self.move_split(engine, to);
         }
@@ -777,6 +782,13 @@ impl PartLayer {
             return merge(result, self.plain_key(engine, key));
         }
         engine.process_key(key)
+    }
+
+    /// `[keys] end_commit` with the caret at the part's end (nothing split
+    /// off to its right): the caret can't go further, so the key commits
+    /// everything, as `commit` does.
+    fn at_end_commit(&self, key: &KeyEvent) -> bool {
+        self.split.is_none() && self.keys.end_commit.hit(key)
     }
 
     /// The caret move a key asks for (`[keys] left` / `right` / `home` /
@@ -865,11 +877,11 @@ impl PartLayer {
         if self.keys.register.hit(key) {
             return self.start_registration(engine);
         }
+        if self.keys.commit.hit(key) || self.at_end_commit(key) {
+            return self.commit_conversion_all(engine);
+        }
         if let Some(to) = self.split_move(key) {
             return self.move_split(engine, to);
-        }
-        if self.keys.commit.hit(key) {
-            return self.commit_conversion_all(engine);
         }
         if self.keys.katakana.hit(key) {
             return self.commit_katakana(engine);
@@ -1548,6 +1560,28 @@ mod tests {
         assert_eq!(engine.reading(), "いいてんき");
         assert_eq!(feed(&mut layer, &mut engine, " "), "いいてんき");
         assert_eq!(layer.mode(), PartMode::Plain);
+    }
+
+    #[test]
+    fn ctrl_f_and_ctrl_e_at_the_end_commit_everything() {
+        let (mut layer, mut engine) = setup();
+        feed(&mut layer, &mut engine, "Kyouha");
+        let result = layer.process_key(&mut engine, &ctrl('f'));
+        assert_eq!(commits(&result), "きょうは");
+        assert_eq!(layer.mode(), PartMode::Plain);
+        // From the candidate window too.
+        feed(&mut layer, &mut engine, "Kyouha");
+        layer.process_key(&mut engine, &ctrl('n'));
+        let result = layer.process_key(&mut engine, &ctrl('e'));
+        assert_eq!(commits(&result), "きょうは");
+        // Cut short, Ctrl+F moves the caret back first; at the end, it commits.
+        feed(&mut layer, &mut engine, "Kyouha");
+        layer.process_key(&mut engine, &ctrl('b'));
+        let result = layer.process_key(&mut engine, &ctrl('f'));
+        assert_eq!(commits(&result), "");
+        assert_eq!(engine.reading(), "きょうは");
+        let result = layer.process_key(&mut engine, &ctrl('f'));
+        assert_eq!(commits(&result), "きょうは");
     }
 
     #[test]

@@ -200,4 +200,5 @@ left = "C-b Left"       # 変換する範囲を1文字縮める
 right = "C-f Right"     # 1文字伸ばす
 home = "C-a Home"       # 先頭の1文字だけにする
 end = "C-e End"         # 全体にする
+end_commit = "C-f C-e"  # カーソルが末尾にあるときは、すべて確定
 select = "jkfduire"     # 候補を選ぶキー（8文字、ページの順）
