@@ -291,6 +291,9 @@ pub(in crate::core) struct LiveConversion {
     /// Cleared by gestures that fall back to the kana display (cursor moves,
     /// first Escape, mode switches) without discarding the chunks.
     pub shown: bool,
+    /// The live text came from the learning cache (a phrase committed
+    /// after the same clause before), not from the model.
+    pub learned: bool,
 }
 
 impl LiveConversion {
@@ -298,6 +301,7 @@ impl LiveConversion {
         Self {
             enabled,
             shown: false,
+            learned: false,
         }
     }
 }

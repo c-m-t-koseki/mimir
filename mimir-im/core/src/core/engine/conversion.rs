@@ -120,10 +120,13 @@ impl InputMethodEngine {
             && prev_suggest_text != reading
             && !seen.contains(prev_suggest_text.as_str())
         {
-            candidates.insert(
-                0,
-                AnnotatedCandidate::new(prev_suggest_text, CandidateSource::Model),
-            );
+            // Live text the learning cache answered is the learning's.
+            let source = if self.live.learned {
+                CandidateSource::Learning
+            } else {
+                CandidateSource::Model
+            };
+            candidates.insert(0, AnnotatedCandidate::new(prev_suggest_text, source));
         }
 
         if candidates.is_empty() {
@@ -304,6 +307,7 @@ impl InputMethodEngine {
         // still get dictionary/rewriter/fallback candidates. Loading here
         // synchronously would block the key-event thread on the download.
         let candidates = self.model_candidates(reading, num_candidates);
+        self.model_head = candidates.first().map(|text| self.settle_text(text));
 
         let hiragana = reading.to_string();
         let katakana = mimir_engine::hiragana_to_katakana(reading);
@@ -764,7 +768,28 @@ impl InputMethodEngine {
             self.record_learning(reading, text);
             self.chosen = Some((reading.clone(), text.to_string()));
         }
+        // Learning is a scaffold for what the model can't yet give: taken as
+        // the window opened, and the model's own answer too, the lone learned
+        // entry for the reading has done its job.
+        if let Some(reading) = reading
+            && text == self.conversion_origin
+            && self.model_head.as_deref() == Some(text)
+        {
+            self.retire_learning(reading, text);
+        }
         self.end_composition();
+    }
+
+    /// Forget `reading → surface` when it is all the learning cache holds
+    /// for the reading (more than one, and it is what ranks it above the
+    /// others).
+    fn retire_learning(&mut self, reading: &str, surface: &str) {
+        if let Some(cache) = &mut self.learning
+            && let [(learned, _)] = cache.lookup(reading).as_slice()
+            && learned == surface
+        {
+            cache.remove(reading, surface);
+        }
     }
 
     /// Commit the current conversion

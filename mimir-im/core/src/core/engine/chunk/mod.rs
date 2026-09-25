@@ -46,6 +46,7 @@ impl InputMethodEngine {
             }
             _ => None,
         };
+        self.live.learned = learned.is_some();
         let chunks = match learned {
             Some(surface) => vec![ComposingChunk {
                 reading: full_reading.clone(),

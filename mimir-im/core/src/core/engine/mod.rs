@@ -121,6 +121,10 @@ pub struct InputMethodEngine {
     /// conversion's) own answer. Committing it teaches nothing — the model
     /// gives it again — so only a different pick is learned.
     conversion_origin: String,
+    /// The model's own first answer for the window's reading, apart from
+    /// what learning put above it: a learned pick the model now gives by
+    /// itself is no longer needed (see `finish_conversion`).
+    model_head: Option<String>,
     /// Everything committed as a conversion, picked or not: what Tab
     /// completes from. Kept apart from `learning`, which only holds picks
     /// and steers the conversion itself.
@@ -189,6 +193,7 @@ impl InputMethodEngine {
             },
             surrounding_context: None,
             conversion_origin: String::new(),
+            model_head: None,
             history: None,
             chosen: None,
             pieces: None,
@@ -549,6 +554,8 @@ impl InputMethodEngine {
     pub(super) fn clear_composition(&mut self) {
         self.input_buf.clear();
         self.live.shown = false;
+        self.live.learned = false;
+        self.model_head = None;
         self.chunks.clear();
         self.chunk_breaks.clear();
         self.shown_suggestions = CandidateList::default();
