@@ -168,6 +168,9 @@ pub struct InputMethodEngine {
     /// selects. The Conversion state owns its own list; this covers the
     /// Composing state, which renders candidates without holding them.
     shown_suggestions: CandidateList,
+    /// The conversion preview on screen and the reading it is for: Ctrl+N
+    /// opens on it as shown, not on a list built again.
+    previewed: Option<(String, CandidateList)>,
     /// Dictionaries (system, user)
     dicts: Dictionaries,
     /// Learning cache (user conversion history)
@@ -207,6 +210,7 @@ impl InputMethodEngine {
             conversion_cache: ConversionCache::default(),
             suppress_suggest: false,
             shown_suggestions: CandidateList::default(),
+            previewed: None,
             dicts: Dictionaries::default(),
             learning: None,
             model_loading: None,
@@ -559,6 +563,22 @@ impl InputMethodEngine {
         self.chunks.clear();
         self.chunk_breaks.clear();
         self.shown_suggestions = CandidateList::default();
+        self.previewed = None;
+    }
+
+    /// Whether the window shows a conversion preview (the part layer then
+    /// shows the preedit converted to its end, as the window's head).
+    pub fn previewing(&self) -> bool {
+        self.preview().is_some()
+    }
+
+    /// The conversion preview, while the window still shows it for the
+    /// reading typed: any other render of the window replaces it.
+    fn preview(&self) -> Option<&CandidateList> {
+        let (reading, list) = self.previewed.as_ref()?;
+        (*reading == self.input_buf.settled_reading(&self.converters.romaji)
+            && self.shown_suggestions.candidates() == list.candidates())
+        .then_some(list)
     }
 
     /// End the composition: clear the buffer, live display, and chunks,
