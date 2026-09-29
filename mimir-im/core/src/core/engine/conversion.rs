@@ -89,6 +89,60 @@ impl CandidateBuilder {
 impl InputMethodEngine {
     /// Start kanji conversion for the current buffer (Space/Down/Tab).
     pub(super) fn start_conversion(&mut self, learning: LearningLookup) -> EngineResult {
+        // The window already shows what to open on: open on it as shown.
+        if learning == LearningLookup::Use
+            && let Some(list) = self.preview().cloned()
+        {
+            self.live.shown = false;
+            let reading = self.input_buf.settled_reading(&self.converters.romaji);
+            return self.enter_conversion_state(&reading, list);
+        }
+        // Snapshot the live-conversion text before clearing it, so the
+        // displayed candidate survives even if re-inference diverges.
+        let prev_suggest_text = self.live_text_with_pending();
+        self.live.shown = false;
+        let Some((reading, candidates)) = self.conversion_candidates(prev_suggest_text, learning)
+        else {
+            // No candidates: stay composing, untouched (emoji queries with
+            // no match land here)
+            if self
+                .input_buf
+                .settled_reading(&self.converters.romaji)
+                .is_empty()
+            {
+                return EngineResult::consumed();
+            }
+            let preedit = self.set_composing_state();
+            return EngineResult::consumed().with_action(EngineAction::UpdatePreedit(preedit));
+        };
+        self.enter_conversion_state(&reading, candidates)
+    }
+
+    /// The window a conversion would open on, shown while the part is
+    /// still typed (`[display] candidate_window = "always"`): the list the
+    /// composing window shows and a pick by select key commits from. The
+    /// composition stays as it is.
+    pub fn preview_conversion(&mut self) -> Option<CandidateList> {
+        if !matches!(self.state, InputState::Composing { .. }) {
+            return None;
+        }
+        let (reading, candidates) =
+            self.conversion_candidates(self.live_text_with_pending(), LearningLookup::Use)?;
+        // A pick of what the window opened on is no choice to learn, as in
+        // a conversion.
+        self.conversion_origin = candidates.selected_text().unwrap_or_default().to_string();
+        self.shown_suggestions = candidates.clone();
+        self.previewed = Some((reading, candidates.clone()));
+        Some(candidates)
+    }
+
+    /// The reading and candidates a conversion opens on, `shown` (the
+    /// live-conversion text) first; `None` without any.
+    fn conversion_candidates(
+        &mut self,
+        prev_suggest_text: String,
+        learning: LearningLookup,
+    ) -> Option<(String, CandidateList)> {
         // Resolve the reading without touching the composition, so Esc
         // returns to an editable buffer with the romaji tail still live.
         let reading = self.input_buf.settled_reading(&self.converters.romaji);
@@ -97,13 +151,8 @@ impl InputMethodEngine {
         let base = self.input_buf.reading();
         let pending = self.input_buf.pending();
 
-        // Snapshot the live-conversion text before clearing it, so the
-        // displayed candidate survives even if re-inference diverges.
-        let prev_suggest_text = self.live_text_with_pending();
-        self.live.shown = false;
-
         if reading.is_empty() {
-            return EngineResult::consumed();
+            return None;
         }
 
         // Get candidates from kanji converter (use full num_candidates for explicit conversion)
@@ -115,18 +164,18 @@ impl InputMethodEngine {
             learning,
         );
 
-        let seen: HashSet<&str> = candidates.iter().map(|c| c.text.as_str()).collect();
-        if !prev_suggest_text.is_empty()
-            && prev_suggest_text != reading
-            && !seen.contains(prev_suggest_text.as_str())
-        {
-            // Live text the learning cache answered is the learning's.
-            let source = if self.live.learned {
-                CandidateSource::Learning
-            } else {
-                CandidateSource::Model
+        // What the preedit shows heads the list, so the window opens on it
+        // (moved up when another source ranked it lower).
+        if !prev_suggest_text.is_empty() {
+            let shown = match candidates.iter().position(|c| c.text == prev_suggest_text) {
+                Some(at) => candidates.remove(at),
+                // Live text the learning cache answered is the learning's.
+                None if self.live.learned => {
+                    AnnotatedCandidate::new(prev_suggest_text, CandidateSource::Learning)
+                }
+                None => AnnotatedCandidate::new(prev_suggest_text, CandidateSource::Model),
             };
-            candidates.insert(0, AnnotatedCandidate::new(prev_suggest_text, source));
+            candidates.insert(0, shown);
         }
 
         // A reading with romaji stranded between kana (ございmす) is a typo:
@@ -142,14 +191,10 @@ impl InputMethodEngine {
         candidates.splice(at..at, retyped);
 
         if candidates.is_empty() {
-            // No candidates: stay composing, untouched (emoji queries with
-            // no match land here)
-            let preedit = self.set_composing_state();
-            return EngineResult::consumed().with_action(EngineAction::UpdatePreedit(preedit));
+            return None;
         }
-
         let candidate_list = self.to_conversion_candidate_list(candidates, &reading);
-        self.enter_conversion_state(&reading, candidate_list)
+        Some((reading, candidate_list))
     }
 
     /// Map builder output to the public [`CandidateList`] shown in the

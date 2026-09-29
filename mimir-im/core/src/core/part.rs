@@ -233,6 +233,9 @@ impl PartLayer {
             && self.split.is_none()
             && self.mode == PartMode::Part
             && composing(engine)
+            // The window's head is converted to its end: the preedit shows
+            // the same, not a kana tail.
+            && !engine.previewing()
             && !engine.has_pending_romaji()
             && self.deleted != Some(true)
     }
@@ -246,9 +249,14 @@ impl PartLayer {
     }
 
     /// The keys picking a candidate, in page order (the frontend labels
-    /// the window with them).
-    pub fn select_keys(&self) -> String {
-        self.keys.select.iter().collect()
+    /// the window with them): capitals while the part is typed, where
+    /// Shift picks.
+    pub fn select_keys(&self, engine: &InputMethodEngine) -> String {
+        let keys = self.keys.select.iter();
+        match self.mode == PartMode::Part && composing(engine) {
+            true => keys.map(|c| c.to_ascii_uppercase()).collect(),
+            false => keys.collect(),
+        }
     }
 
     pub fn with_skk_style(self, skk_style: bool) -> Self {
@@ -312,6 +320,7 @@ impl PartLayer {
             .then(|| deletes_a_lone_kana(engine));
         }
         let result = self.dispatch(engine, key);
+        let result = self.preview_conversion(engine, result);
         // What showed before the rewrite matters for this key only.
         if key.is_press && !key.keysym.is_modifier() {
             self.before_rewrite = None;
@@ -325,6 +334,31 @@ impl PartLayer {
         // next keystroke would redraw what it deleted.
         if composing && ctrl && self.mode != PartMode::Ascii {
             result.consumed = true;
+        }
+        result
+    }
+
+    /// While a part is typed, its window shows what a conversion would
+    /// open on, so Shift + a select key picks from the same list Ctrl+N
+    /// shows. Only a window the engine shows is replaced: `[display]
+    /// candidate_window = "conversion"` keeps it closed.
+    fn preview_conversion(
+        &self,
+        engine: &mut InputMethodEngine,
+        mut result: EngineResult,
+    ) -> EngineResult {
+        if self.mode != PartMode::Part || self.abbrev || !composing(engine) {
+            return result;
+        }
+        let Some(at) = result
+            .actions
+            .iter()
+            .position(|a| matches!(a, EngineAction::ShowCandidates(_)))
+        else {
+            return result;
+        };
+        if let Some(candidates) = engine.preview_conversion() {
+            result.actions[at] = EngineAction::ShowCandidates(candidates);
         }
         result
     }
@@ -906,16 +940,18 @@ impl PartLayer {
         if self.keys.close.hit(key) {
             return self.close_keeping_tail(engine);
         }
-        if let Some(first) = part_opener(key, ch) {
-            // A capital in the middle of a syllable (`s` + `E`) is SandS
-            // rolling over — Space still held when the next key lands — not
-            // a new part: nothing ever ends a part on an unfired consonant.
-            if engine.has_pending_romaji()
-                && let Some(ch) = first
-            {
-                return engine.process_key(&press_char(ch));
+        if let Some(Some(first)) = part_opener(key, ch) {
+            // Inside a part a capital opens no next part: Shift + a select
+            // key picks from the window, any other capital reads on as its
+            // lowercase (SandS rolling over, `s` + `E`, among them).
+            if let Some(index) = self.keys.select_index(first) {
+                let result = engine.select_candidate_on_page(index);
+                if matches!(engine.state(), InputState::Empty) {
+                    let tail = self.take_tail();
+                    return self.continue_with(engine, tail, result);
+                }
             }
-            return self.start_part(engine, first);
+            return engine.process_key(&press_char(first));
         }
         if self.keys.ascii.hit(key) {
             return self.switch_to_ascii(engine);
@@ -1037,11 +1073,13 @@ impl PartLayer {
             return engine.process_key(key);
         };
         // Picking by letter is for a window just opened; once the selection
-        // was stepped to, the letter types on.
+        // was stepped to, the letter types on. Shift + a select key picks
+        // either way, as it does while the part is typed.
+        let shifted = key.modifiers.shift_key || ch.is_ascii_uppercase();
         if let Some(index) = self
             .keys
-            .select_index(ch)
-            .filter(|_| !key.modifiers.shift_key && !self.stepped)
+            .select_index(ch.to_ascii_lowercase())
+            .filter(|_| shifted || !self.stepped)
         {
             let result = engine.select_candidate_on_page(index);
             if matches!(engine.state(), InputState::Empty) {
@@ -1053,8 +1091,11 @@ impl PartLayer {
         if self.keys.close.hit(key) {
             return self.commit_conversion(engine);
         }
-        if let Some(first) = part_opener(key, ch) {
-            return self.start_part(engine, first);
+        // A capital opens no next part here either: it accepts the
+        // selection and types on as its lowercase.
+        if let Some(Some(first)) = part_opener(key, ch) {
+            let result = self.commit_conversion_all(engine);
+            return merge(result, self.process_key(engine, &press_char(first)));
         }
         // Any other key accepts the selection and keeps typing plain kana.
         let result = self.commit_conversion_all(engine);
@@ -1530,6 +1571,8 @@ fn without_suggestions(mut result: EngineResult) -> EngineResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::settings::CandidateWindow;
+    use crate::core::engine::EngineConfig;
 
     fn feed(layer: &mut PartLayer, engine: &mut InputMethodEngine, keys: &str) -> String {
         let mut committed = String::new();
@@ -1735,8 +1778,20 @@ mod tests {
 
     /// A layer showing the typed tail in kana, with `timing`, and an engine
     /// that converts てんき(が) to 天気(が) after 昨日は without a model.
+    /// No window while typing: with one, the preedit shows its head.
     fn tail_setup(tail_chars: usize, timing: Timing) -> (PartLayer, InputMethodEngine) {
-        let mut engine = InputMethodEngine::new();
+        tail_setup_with(tail_chars, timing, CandidateWindow::Conversion)
+    }
+
+    fn tail_setup_with(
+        tail_chars: usize,
+        timing: Timing,
+        window: CandidateWindow,
+    ) -> (PartLayer, InputMethodEngine) {
+        let mut engine = InputMethodEngine::with_config(EngineConfig {
+            candidate_window: window,
+            ..EngineConfig::default()
+        });
         engine_learning_on(&mut engine);
         engine.set_surrounding_context("昨日は", "");
         engine.learn_after("てんき", "天気", "");
@@ -1757,6 +1812,36 @@ mod tests {
                 EngineAction::UpdatePreedit(p) => Some(p.text().to_string()),
                 _ => None,
             })
+    }
+
+    #[test]
+    fn with_the_window_the_preedit_shows_its_head_and_ctrl_n_opens_on_it() {
+        let (mut layer, mut engine) = tail_setup_with(1, Timing::OFF, CandidateWindow::Always);
+        feed(&mut layer, &mut engine, "Tenk");
+        let result = layer.process_key(&mut engine, &press_char('i'));
+        let head = result.actions.iter().find_map(|a| match a {
+            EngineAction::ShowCandidates(list) => Some(list.candidates()[0].text.clone()),
+            _ => None,
+        });
+        // Converted to the end, not held back in kana: what the window heads.
+        assert_eq!(head.as_deref(), Some("天気"));
+        assert_eq!(engine.preedit().unwrap().text(), "天気");
+        let shown = |r: &EngineResult| {
+            r.actions.iter().find_map(|a| match a {
+                EngineAction::ShowCandidates(list) => Some(
+                    list.candidates()
+                        .iter()
+                        .map(|c| c.text.clone())
+                        .collect::<Vec<_>>(),
+                ),
+                _ => None,
+            })
+        };
+        let before = shown(&result);
+        // Ctrl+N opens on the window as it was, its first row and all.
+        let opened = layer.process_key(&mut engine, &ctrl('n'));
+        assert_eq!(shown(&opened), before);
+        assert!(matches!(engine.state(), InputState::Conversion { .. }));
     }
 
     #[test]
@@ -2030,7 +2115,7 @@ mod tests {
         settings.select = "asdfghjk".into();
         let (layer, mut engine) = setup();
         let mut layer = layer.with_keys(Keymap::parse(&settings).unwrap());
-        assert_eq!(layer.select_keys(), "asdfghjk");
+        assert_eq!(layer.select_keys(&engine), "asdfghjk");
         // A Ctrl chord commits in katakana too.
         feed(&mut layer, &mut engine, "Tesuto");
         let result = layer.process_key(&mut engine, &ctrl('o'));
@@ -2052,10 +2137,48 @@ mod tests {
     }
 
     #[test]
-    fn capital_chains_parts() {
+    fn a_capital_inside_a_part_reads_on() {
         let (mut layer, mut engine) = setup();
-        assert_eq!(feed(&mut layer, &mut engine, "Honjitu"), "");
-        assert_eq!(feed(&mut layer, &mut engine, "Kaigi "), "ほんじつかいぎ");
+        assert_eq!(
+            feed(&mut layer, &mut engine, "HonjituGaigi "),
+            "ほんじつがいぎ"
+        );
+    }
+
+    #[test]
+    fn shift_and_a_select_key_pick_from_the_conversion_shown() {
+        let (mut layer, mut engine) = setup();
+        feed(&mut layer, &mut engine, "Kon");
+        let shown = layer
+            .process_key(&mut engine, &press_char('o'))
+            .actions
+            .into_iter()
+            .find_map(|a| match a {
+                EngineAction::ShowCandidates(list) => Some(list),
+                _ => None,
+            })
+            .expect("the window shows while typing");
+        // What Ctrl+N opens on, the katakana fallback among it.
+        assert!(shown.candidates().iter().any(|c| c.text == "コノ"));
+        assert_eq!(layer.select_keys(&engine), "JKFDUIRE");
+        let second = shown.candidates()[1].text.clone();
+        assert_eq!(feed(&mut layer, &mut engine, "K"), second);
+        assert_eq!(layer.mode(), PartMode::Plain);
+        assert_eq!(layer.select_keys(&engine), "jkfduire");
+    }
+
+    #[test]
+    fn shift_and_a_select_key_pick_after_stepping() {
+        let (mut layer, mut engine) = setup();
+        feed(&mut layer, &mut engine, "Kono");
+        layer.process_key(&mut engine, &ctrl('n'));
+        layer.process_key(&mut engine, &ctrl('n'));
+        // Stepped: j types on, J still picks the first.
+        let first = match engine.state() {
+            InputState::Conversion { candidates, .. } => candidates.candidates()[0].text.clone(),
+            _ => panic!("converting"),
+        };
+        assert_eq!(feed(&mut layer, &mut engine, "J"), first);
     }
 
     #[test]
@@ -2133,8 +2256,8 @@ mod tests {
         // Space+s, then `e` while Space is still down: `SE`, meant `Se`.
         assert_eq!(feed(&mut layer, &mut engine, "SE"), "");
         assert_eq!(engine.preedit().unwrap().text(), "せ");
-        // A capital after a whole kana still opens the next part.
-        assert_eq!(feed(&mut layer, &mut engine, "Ki "), "せき");
+        // After a whole kana too, a capital reads on inside the part.
+        assert_eq!(feed(&mut layer, &mut engine, "Gi "), "せぎ");
     }
 
     #[test]
