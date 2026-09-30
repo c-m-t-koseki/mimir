@@ -1614,8 +1614,10 @@ mod tests {
         assert!(at("今日は寒いですね") < at("今日はいい天気ですね"));
         let result = pick(&mut layer, &mut engine, &shown, "今日はいい");
         assert_eq!(commits(&result), "今日はいい");
-        // Nothing typed, the entry's next word on offer.
+        // Nothing typed, the entry's next word on offer, named as the
+        // history's.
         assert!(engine.chaining());
+        assert_eq!(engine.window_source(), Some("履歴"));
         assert_eq!(window(&result).unwrap(), ["天気ですね"]);
         let result = pick(
             &mut layer,
@@ -1658,6 +1660,19 @@ mod tests {
         let result = layer.process_key(&mut engine, &press_char('a'));
         assert_eq!(commits(&result), "あ");
         assert!(!engine.chaining());
+    }
+
+    #[test]
+    fn tab_opens_the_history_by_name() {
+        let (mut layer, mut engine) = history_setup();
+        feed(&mut layer, &mut engine, "Kyouha");
+        layer.process_key(&mut engine, &press(Keysym::TAB));
+        assert_eq!(engine.window_source(), Some("履歴"));
+        // Escape back to typing, then Ctrl+N: the full list, unnamed.
+        layer.process_key(&mut engine, &press(Keysym::ESCAPE));
+        layer.process_key(&mut engine, &ctrl('n'));
+        assert!(matches!(engine.state(), InputState::Conversion { .. }));
+        assert_eq!(engine.window_source(), None);
     }
 
     #[test]

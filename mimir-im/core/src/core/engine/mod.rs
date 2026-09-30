@@ -141,6 +141,9 @@ pub struct InputMethodEngine {
     chain: Option<(String, String)>,
     /// The Conversion state is a chain's window (nothing typed).
     chaining: bool,
+    /// The Conversion state lists history completions only (Tab / Ctrl+I,
+    /// or a chain's window).
+    history_window: bool,
     /// A part being committed in pieces (the part layer cut it at the
     /// caret): its commits held back from the history and the learning
     /// cache until [`Self::record_pieces`] records them as one.
@@ -211,6 +214,7 @@ impl InputMethodEngine {
             offered_completions: Vec::new(),
             chain: None,
             chaining: false,
+            history_window: false,
             pieces: None,
             config: EngineConfig::default(),
             metrics: ConversionMetrics::default(),
@@ -440,6 +444,7 @@ impl InputMethodEngine {
             return None;
         }
         self.chaining = true;
+        self.history_window = true;
         let list = self.settle_candidates(words);
         Some(self.enter_conversion_state("", list))
     }
@@ -516,6 +521,7 @@ impl InputMethodEngine {
             return EngineResult::consumed();
         }
         self.offer_completions(&candidates);
+        self.history_window = true;
         let list = self.settle_candidates(candidates);
         self.enter_conversion_state(&base, list)
     }
@@ -674,6 +680,20 @@ impl InputMethodEngine {
         self.shown_suggestions = CandidateList::default();
         self.previewed = None;
         self.offered_completions.clear();
+        self.history_window = false;
+    }
+
+    /// What the conversion window lists, by name, when it is one source's:
+    /// the narrowed source (Ctrl+T / Ctrl+R), or 履歴 for completions.
+    pub fn window_source(&self) -> Option<&'static str> {
+        match &self.state {
+            InputState::Conversion {
+                filter: Some(source),
+                ..
+            } => Some(source.name()),
+            InputState::Conversion { .. } if self.history_window => Some("履歴"),
+            _ => None,
+        }
     }
 
     /// Whether the window shows a conversion preview (the part layer then
