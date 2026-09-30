@@ -243,8 +243,9 @@ class CandidateWindowController {
     var showsKeys = true
     /// `[display] candidate_layout`, from the engine.
     var layout = "vertical"
-    /// The source the window is narrowed to (Ctrl+T / Ctrl+R), from the
-    /// engine: named at the header's right, before the page.
+    /// What the window lists when it is one source's (Ctrl+T / Ctrl+R, or
+    /// 履歴 for Tab / Ctrl+I), from the engine: named at the header's
+    /// right, before the page.
     var source: String?
 
     init() {

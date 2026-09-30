@@ -89,6 +89,7 @@ impl CandidateBuilder {
 impl InputMethodEngine {
     /// Start kanji conversion for the current buffer (Space/Down/Tab).
     pub(super) fn start_conversion(&mut self, learning: LearningLookup) -> EngineResult {
+        self.history_window = false;
         // The window already shows what to open on: open on it as shown.
         if learning == LearningLookup::Use
             && let Some(list) = self.preview().cloned()
@@ -935,6 +936,7 @@ impl InputMethodEngine {
         if !matches!(self.state, InputState::Conversion { .. }) {
             return EngineResult::not_consumed();
         }
+        self.history_window = false;
 
         if self.input_buf.is_empty() {
             self.state = InputState::Empty;

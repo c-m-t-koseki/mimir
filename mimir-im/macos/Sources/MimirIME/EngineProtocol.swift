@@ -20,8 +20,9 @@ struct KeyResult: Decodable {
     let selectChars: String?
     /// `[display] candidate_layout`: "vertical" or "keyboard".
     let candidateLayout: String?
-    /// The source the conversion window is narrowed to (Ctrl+T / Ctrl+R);
-    /// absent for the full list.
+    /// What the conversion window lists when it is one source's: the one
+    /// narrowed to (Ctrl+T / Ctrl+R), or 履歴 (Tab / Ctrl+I); absent for
+    /// the full list.
     let source: String?
     /// The reading to set above the preedit's last kanji run.
     let ruby: Ruby?
