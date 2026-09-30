@@ -35,6 +35,7 @@ use tracing::{debug, trace};
 
 use super::candidate::{Candidate, CandidateList, CandidateSource};
 use super::keycode::{KeyEvent, Keysym};
+use super::phrase::word_ends;
 use super::preedit::Preedit;
 use super::state::InputState;
 use crate::config::settings::{CandidateWindow, Settings, SpaceStyle};
@@ -132,6 +133,14 @@ pub struct InputMethodEngine {
     /// The last pick learned, `(reading, surface)`, for the part layer
     /// (it learns a one-char pick joined to what came before).
     chosen: Option<(String, String)>,
+    /// The history completions on screen, `(reading, surface)`: taking one
+    /// starts a chain.
+    offered_completions: Vec<(String, String)>,
+    /// What a chain has committed so far, `(reading, surface)`: the start
+    /// of the history entries whose next word is offered.
+    chain: Option<(String, String)>,
+    /// The Conversion state is a chain's window (nothing typed).
+    chaining: bool,
     /// A part being committed in pieces (the part layer cut it at the
     /// caret): its commits held back from the history and the learning
     /// cache until [`Self::record_pieces`] records them as one.
@@ -199,6 +208,9 @@ impl InputMethodEngine {
             model_head: None,
             history: None,
             chosen: None,
+            offered_completions: Vec::new(),
+            chain: None,
+            chaining: false,
             pieces: None,
             config: EngineConfig::default(),
             metrics: ConversionMetrics::default(),
@@ -364,22 +376,129 @@ impl InputMethodEngine {
 
     /// Earlier commits whose reading extends `base` — longer readings only,
     /// and actual conversions (a kana phrase committed as typed completes
-    /// to nothing worth offering) — most used first.
-    fn history_completions(&self, base: &str) -> Vec<Candidate> {
+    /// to nothing worth offering) — most used first, each cut at the end of
+    /// the word `base` runs into (今日はいい天気 for きょうはい: 今日はいい).
+    /// The rest follows a word at a time once one is taken
+    /// (`continue_chain`).
+    pub(super) fn history_completions(&self, base: &str) -> Vec<Candidate> {
         let Some(history) = &self.history else {
             return Vec::new();
         };
+        let typed = base.chars().count();
+        let mut seen = HashSet::new();
         history
             .prefix_lookup(base)
             .into_iter()
             .filter(|(reading, surface, _)| reading != base && reading != surface)
-            .map(|(reading, surface, _)| Candidate {
-                text: surface,
-                reading: Some(reading),
-                source: Some(CandidateSource::Learning),
-                description: None,
+            .filter_map(|(reading, surface, _)| {
+                let (to_r, to_s) = word_ends(&reading, &surface)
+                    .into_iter()
+                    .find(|&(end, _)| end > typed)?;
+                Some(Candidate {
+                    text: surface.chars().take(to_s).collect(),
+                    reading: Some(reading.chars().take(to_r).collect()),
+                    source: Some(CandidateSource::Learning),
+                    description: None,
+                })
             })
+            .filter(|c| seen.insert(c.text.clone()))
             .collect()
+    }
+
+    /// Remember the completions a window shows (see `offered_completions`).
+    pub(super) fn offer_completions(&mut self, completions: &[Candidate]) {
+        self.offered_completions = completions
+            .iter()
+            .filter_map(|c| Some((c.reading.clone()?, c.text.clone())))
+            .collect();
+    }
+
+    /// A commit's part in a chain: a completion taken starts one, a word of
+    /// the chain's window extends it, anything else ends it. Whether the
+    /// commit was the chain's own word.
+    pub(super) fn follow_chain(&mut self, text: &str, reading: &Option<String>) -> bool {
+        let own = std::mem::take(&mut self.chaining);
+        self.chain = match (reading, own) {
+            (Some(reading), true) => self.chain.take().map(|(r, t)| (r + reading, t + text)),
+            (Some(reading), false)
+                if self
+                    .offered_completions
+                    .iter()
+                    .any(|(r, t)| r == reading && t == text) =>
+            {
+                Some((reading.clone(), text.to_string()))
+            }
+            _ => None,
+        };
+        own
+    }
+
+    /// After a completion (or a word of one) is committed, with nothing
+    /// typed: open a window on the next word of each history entry the
+    /// chain begins, a word boundary of the entry where the chain ends.
+    /// `None`, the chain over, when no entry goes on.
+    pub fn continue_chain(&mut self) -> Option<EngineResult> {
+        let (reading, text) = self.chain.clone()?;
+        let words = self.chain_words(&reading, &text);
+        if words.is_empty() || !matches!(self.state, InputState::Empty) {
+            self.chain = None;
+            return None;
+        }
+        self.chaining = true;
+        let list = self.settle_candidates(words);
+        Some(self.enter_conversion_state("", list))
+    }
+
+    /// The next word of each history entry starting with `reading` →
+    /// `text` at one of its word ends.
+    fn chain_words(&self, reading: &str, text: &str) -> Vec<Candidate> {
+        let Some(history) = &self.history else {
+            return Vec::new();
+        };
+        let at = (reading.chars().count(), text.chars().count());
+        let mut seen = HashSet::new();
+        history
+            .prefix_lookup(reading)
+            .into_iter()
+            .filter(|(r, s, _)| r != reading && s.starts_with(text))
+            .filter_map(|(r, s, _)| {
+                let ends = word_ends(&r, &s);
+                if !ends.contains(&at) {
+                    return None;
+                }
+                let &(to_r, to_s) = ends.iter().find(|&&(end, _)| end > at.0)?;
+                Some(Candidate {
+                    text: s.chars().skip(at.1).take(to_s - at.1).collect(),
+                    reading: Some(r.chars().skip(at.0).take(to_r - at.0).collect()),
+                    source: Some(CandidateSource::Learning),
+                    description: None,
+                })
+            })
+            .filter(|c| seen.insert(c.text.clone()))
+            .collect()
+    }
+
+    /// Let a chain go: what came after its commit was not its window.
+    pub fn forget_chain(&mut self) {
+        self.chain = None;
+    }
+
+    /// Whether the window is a chain's (nothing typed, the history's next
+    /// words on offer).
+    pub fn chaining(&self) -> bool {
+        self.chaining && matches!(self.state, InputState::Conversion { .. })
+    }
+
+    /// Close a chain's window, committing nothing. Not consumed: the key
+    /// that closed it goes on as typed.
+    pub fn end_chain(&mut self) -> EngineResult {
+        self.chain = None;
+        self.chaining = false;
+        self.end_composition();
+        EngineResult::not_consumed()
+            .with_action(EngineAction::UpdatePreedit(Preedit::new()))
+            .with_action(EngineAction::HideCandidates)
+            .with_action(EngineAction::HideAuxText)
     }
 
     /// Note a committed conversion in the completion history.
@@ -407,6 +526,7 @@ impl InputMethodEngine {
         if candidates.is_empty() {
             return EngineResult::consumed();
         }
+        self.offer_completions(&candidates);
         let list = self.settle_candidates(candidates);
         self.enter_conversion_state(&base, list)
     }
@@ -564,6 +684,7 @@ impl InputMethodEngine {
         self.chunk_breaks.clear();
         self.shown_suggestions = CandidateList::default();
         self.previewed = None;
+        self.offered_completions.clear();
     }
 
     /// Whether the window shows a conversion preview (the part layer then

@@ -386,6 +386,26 @@ impl InputMethodEngine {
             }
         }
 
+        // 1b. Earlier commits extending the reading, each to the end of the
+        //     word the typed reading runs into (history completion). What
+        //     is offered is remembered: taking one goes on to the entry's
+        //     next word (`continue_chain`). Apart from `predictive`, which
+        //     is the dictionary's guessing: these were all typed before.
+        if learning == LearningLookup::Use && pending.is_empty() {
+            let completions: Vec<Candidate> = self
+                .history_completions(reading)
+                .into_iter()
+                .take(MAX_LEARNING_CANDIDATES)
+                .collect();
+            self.offer_completions(&completions);
+            for c in completions {
+                builder.push(
+                    AnnotatedCandidate::new(c.text, CandidateSource::Learning)
+                        .with_reading(c.reading),
+                );
+            }
+        }
+
         // 2. User dictionary candidates (system dictionary follows the model
         //    in step 4, so the two are split here).
         let (user_dict, system_dict): (Vec<_>, Vec<_>) = self
@@ -467,88 +487,42 @@ impl InputMethodEngine {
         builder.into_candidates()
     }
 
-    /// Look up learning cache candidates for a reading (exact + prefix match, max 3).
-    ///
-    /// Returns candidates from the learning cache suitable for auto-suggest display.
+    /// Learning cache candidates for a reading (at most 3), for the
+    /// composing window and the mixed conversion list.
     pub(super) fn lookup_learning_candidates(&self, reading: &str) -> Vec<Candidate> {
-        self.lookup_learning(reading, "", MAX_LEARNING_CANDIDATES, self.config.predictive)
+        self.lookup_learning(reading, "", MAX_LEARNING_CANDIDATES)
     }
 
-    /// Full learning history for `reading` (exact + prefix, uncapped),
-    /// narrowed by the unresolved romaji tail like the dictionary lookup —
-    /// an exact hit on the base must not swallow the typed tail. Always
-    /// predictive: completing from history is what this view is for.
+    /// Every learned pick for `reading` (uncapped), for the learning view.
     pub(super) fn lookup_learning_history(&self, reading: &str, pending: &str) -> Vec<Candidate> {
-        self.lookup_learning(reading, pending, usize::MAX, true)
+        self.lookup_learning(reading, pending, usize::MAX)
     }
 
-    fn lookup_learning(
-        &self,
-        reading: &str,
-        pending: &str,
-        max: usize,
-        predictive: bool,
-    ) -> Vec<Candidate> {
+    /// Learned picks for `reading`, the exact reading only: learning holds
+    /// what the model can't give, not what to complete to — completing is
+    /// the history's (`history_completions`). Nothing while a romaji tail
+    /// is pending: an exact hit on the base would ignore the typed tail.
+    fn lookup_learning(&self, reading: &str, pending: &str, max: usize) -> Vec<Candidate> {
         let Some(cache) = &self.learning else {
             return vec![];
         };
-        let constraint = self.tail_constraint(pending);
-        if matches!(constraint, TailConstraint::Dead) {
+        if !pending.is_empty() {
             return vec![];
         }
-        let mut candidates: Vec<Candidate> = Vec::new();
+        let lctx = self.truncate_context_for_api();
         let mut seen = HashSet::new();
-
-        // Exact match — only when no romaji tail is pending (an exact hit
-        // on the base would ignore the typed tail)
-        if pending.is_empty() {
-            let lctx = self.truncate_context_for_api();
-            for (surface, _score) in cache.lookup_with_context(reading, &lctx) {
-                if candidates.len() >= max {
-                    break;
-                }
-                if seen.insert(surface.clone()) {
-                    candidates.push(Candidate {
-                        text: surface,
-                        reading: Some(reading.to_string()),
-                        source: Some(CandidateSource::Learning),
-                        description: None,
-                    });
-                }
-            }
-        }
-
-        // Prefix match (predictive), narrowed to the kana the tail can
-        // still become — mirrors the dictionary's expanded search
-        let predictions = if predictive {
-            cache.prefix_lookup(reading)
-        } else {
-            Vec::new()
-        };
-        for (full_reading, surface, _score) in predictions {
-            if candidates.len() >= max {
-                break;
-            }
-            if full_reading == reading {
-                continue;
-            }
-            if let TailConstraint::Narrow(expansions) = &constraint {
-                let rest = full_reading.strip_prefix(reading).unwrap_or(&full_reading);
-                if !expansions.iter().any(|e| rest.starts_with(e.as_str())) {
-                    continue;
-                }
-            }
-            if seen.insert(surface.clone()) {
-                candidates.push(Candidate {
-                    text: surface,
-                    reading: Some(full_reading),
-                    source: Some(CandidateSource::Learning),
-                    description: None,
-                });
-            }
-        }
-
-        candidates
+        cache
+            .lookup_with_context(reading, &lctx)
+            .into_iter()
+            .filter(|(surface, _)| seen.insert(surface.clone()))
+            .take(max)
+            .map(|(surface, _)| Candidate {
+                text: surface,
+                reading: Some(reading.to_string()),
+                source: Some(CandidateSource::Learning),
+                description: None,
+            })
+            .collect()
     }
 
     /// Dictionary candidates for the composing suggestion list (one page).
@@ -810,6 +784,11 @@ impl InputMethodEngine {
     /// Record the committed conversion in the learning cache — when it is
     /// not what the window opened on — and end the composition.
     pub(super) fn finish_conversion(&mut self, text: &str, reading: &Option<String>) {
+        if self.follow_chain(text, reading) {
+            // A word of an entry the history already holds: nothing to note.
+            self.end_composition();
+            return;
+        }
         let picked = reading.is_some() && text != self.conversion_origin;
         if let Some(pieces) = &mut self.pieces {
             pieces.push(reading.as_deref(), text, picked);

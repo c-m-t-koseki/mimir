@@ -7,5 +7,6 @@ pub mod engine;
 pub mod keycode;
 pub mod keymap;
 pub mod part;
+pub(crate) mod phrase;
 pub mod preedit;
 pub mod state;
