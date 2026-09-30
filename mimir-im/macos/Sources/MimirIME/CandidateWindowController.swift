@@ -235,6 +235,9 @@ class CandidateWindowController {
     var showsKeys = true
     /// `[display] candidate_layout`, from the engine.
     var layout = "vertical"
+    /// The source the window is narrowed to (Ctrl+T / Ctrl+R), from the
+    /// engine: named at the header's right, before the page.
+    var source: String?
 
     init() {
         panel = Swiss.panel()
@@ -295,7 +298,9 @@ class CandidateWindowController {
         listView.header = auxText.flatMap { $0.isEmpty ? nil : $0 }
         listView.keyboard = layout == "keyboard"
         listView.slotKeys = keys
-        listView.page = state.totalPages > 1 ? "\(state.page + 1) / \(state.totalPages)" : nil
+        let page = state.totalPages > 1 ? "\(state.page + 1) / \(state.totalPages)" : nil
+        let right = [source, page].compactMap { $0 }.joined(separator: "  ")
+        listView.page = right.isEmpty ? nil : right
         listView.rows = state.candidates.enumerated().map { index, candidate in
             CandidateListView.Row(
                 key: showsKeys && index < keys.count ? String(keys[index]) : "",

@@ -156,6 +156,10 @@ pub struct KeyResult {
     pub select_chars: String,
     /// `[display] candidate_layout`: "vertical" or "keyboard".
     pub candidate_layout: CandidateLayout,
+    /// The source the conversion window is narrowed to (Ctrl+T / Ctrl+R),
+    /// by name; absent for the full list.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<&'static str>,
     /// `[display] reading_display = "ruby"`: the reading to set above the
     /// preedit's last kanji run.
     #[serde(skip_serializing_if = "Option::is_none")]

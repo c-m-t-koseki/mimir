@@ -112,6 +112,7 @@ class MimirInputController: IMKInputController {
         Self.candidateWindow.showsKeys = result.selectKeys ?? true
         if let chars = result.selectChars { Self.candidateWindow.keys = Array(chars) }
         Self.candidateWindow.layout = result.candidateLayout ?? "vertical"
+        Self.candidateWindow.source = result.source
         apply(actions: result.actions, client: client)
         showRuby(result.ruby, client: client)
         scheduleRefresh(after: result.refreshMs, client: client)
