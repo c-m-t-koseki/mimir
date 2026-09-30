@@ -892,11 +892,18 @@ impl PartLayer {
         }
         let k = &self.keys;
         if k.convert.hit(key) {
-            return if matches!(engine.state(), InputState::Empty) {
-                EngineResult::consumed()
-            } else {
-                engine.process_key(&press(Keysym::SPACE))
-            };
+            if matches!(engine.state(), InputState::Empty) {
+                return EngineResult::consumed();
+            }
+            // The window already shows the first: the key steps on to the
+            // second, as it does once the conversion is open.
+            let previewed = engine.previewing();
+            let result = engine.process_key(&press(Keysym::SPACE));
+            if previewed && matches!(engine.state(), InputState::Conversion { .. }) {
+                self.stepped = true;
+                return merge(result, engine.process_key(&press(Keysym::TAB)));
+            }
+            return result;
         }
         if k.cancel.hit(key) {
             return self.cancel_part(engine);
@@ -1726,16 +1733,22 @@ mod tests {
     fn after_stepping_letters_type_on() {
         let (mut layer, mut engine) = setup();
         feed(&mut layer, &mut engine, "Kaigi");
-        layer.process_key(&mut engine, &ctrl('n'));
-        assert!(layer.picks_by_letter());
+        // The window shows while typing: Ctrl+N steps on to the second.
         layer.process_key(&mut engine, &ctrl('n'));
         assert!(!layer.picks_by_letter());
         // `j` commits the selection (the second candidate, カイギ without
         // a model) and types on.
         assert_eq!(feed(&mut layer, &mut engine, "ja"), "カイギじゃ");
-        // A window just opened still picks by letter.
+        // A window just opened (none while typing) still picks by letter.
+        let mut engine = InputMethodEngine::with_config(EngineConfig {
+            candidate_window: CandidateWindow::Conversion,
+            ..EngineConfig::default()
+        });
+        let mut layer = PartLayer::new();
+        layer.attach(&mut engine);
         feed(&mut layer, &mut engine, "Kaigi");
         layer.process_key(&mut engine, &ctrl('n'));
+        assert!(layer.picks_by_letter());
         assert_eq!(feed(&mut layer, &mut engine, "j"), "かいぎ");
         assert!(matches!(engine.state(), InputState::Empty));
     }
@@ -1838,10 +1851,15 @@ mod tests {
             })
         };
         let before = shown(&result);
-        // Ctrl+N opens on the window as it was, its first row and all.
+        // Ctrl+N opens on the window as it was, its first row and all, and
+        // steps on to the second, the first being on screen already.
         let opened = layer.process_key(&mut engine, &ctrl('n'));
         assert_eq!(shown(&opened), before);
-        assert!(matches!(engine.state(), InputState::Conversion { .. }));
+        match engine.state() {
+            InputState::Conversion { candidates, .. } => assert_eq!(candidates.cursor(), 1),
+            _ => panic!("converting"),
+        }
+        assert!(!layer.picks_by_letter());
     }
 
     #[test]
@@ -1928,11 +1946,12 @@ mod tests {
         let result = layer.process_key(&mut engine, &ctrl('f'));
         assert_eq!(commits(&result), "きょうは");
         assert_eq!(layer.mode(), PartMode::Plain);
-        // From the candidate window too.
+        // From the candidate window too, with what it selects (Ctrl+N
+        // stepped on to the second, キョウハ without a model).
         feed(&mut layer, &mut engine, "Kyouha");
         layer.process_key(&mut engine, &ctrl('n'));
         let result = layer.process_key(&mut engine, &ctrl('e'));
-        assert_eq!(commits(&result), "きょうは");
+        assert_eq!(commits(&result), "キョウハ");
         // Cut short, Ctrl+F moves the caret back first; at the end, it commits.
         feed(&mut layer, &mut engine, "Kyouha");
         layer.process_key(&mut engine, &ctrl('b'));
@@ -2127,8 +2146,7 @@ mod tests {
         );
         // Candidates are picked by the new keys.
         feed(&mut layer, &mut engine, "Kaigi");
-        layer.process_key(&mut engine, &ctrl('n'));
-        assert_eq!(feed(&mut layer, &mut engine, "a"), "かいぎ");
+        assert_eq!(feed(&mut layer, &mut engine, "A"), "かいぎ");
         // ; switches to ASCII, l no longer does.
         feed(&mut layer, &mut engine, "l");
         assert_eq!(layer.mode(), PartMode::Plain);
@@ -2319,8 +2337,7 @@ mod tests {
         // No model: parts commit their reading, which teaches nothing.
         feed(&mut layer, &mut engine, "Kaigi noTe");
         // Picking テ over て: learned, joined to かいぎ + の.
-        layer.process_key(&mut engine, &ctrl('n'));
-        assert_eq!(feed(&mut layer, &mut engine, "k"), "テ");
+        assert_eq!(feed(&mut layer, &mut engine, "K"), "テ");
         let got = learned(&engine);
         assert!(!got.iter().any(|(r, _)| r == "かいぎ"), "{got:?}");
         assert!(
@@ -2330,8 +2347,7 @@ mod tests {
         assert!(!got.iter().any(|(r, _)| r == "て"));
         // The window's own answer, committed, teaches nothing either.
         feed(&mut layer, &mut engine, "Kaigi");
-        layer.process_key(&mut engine, &ctrl('n'));
-        feed(&mut layer, &mut engine, "j");
+        feed(&mut layer, &mut engine, "J");
         assert!(!learned(&engine).iter().any(|(r, _)| r == "かいぎ"));
     }
 
