@@ -296,7 +296,7 @@ impl ImServer {
             },
             hint: self.part.hint(&self.engine),
             select_keys: self.part.picks_by_letter(),
-            select_chars: self.part.select_keys(&self.engine),
+            select_chars: self.part.select_keys(),
             candidate_layout: self.candidate_layout,
             source: self.engine.state().filter().map(|s| s.name()),
             ruby: self

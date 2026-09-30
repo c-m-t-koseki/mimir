@@ -121,6 +121,14 @@ final class CandidateListView: NSView {
         (text as NSString).size(withAttributes: [.font: font])
     }
 
+    /// The height of a full page, header included: what decides the
+    /// window's side of the cursor, so it stays on one side however many
+    /// rows show.
+    var fullPageHeight: CGFloat {
+        let lines = keyboard ? slotRows : max(slotKeys.count, rows.count)
+        return Swiss.grid + Swiss.grid * 3 + 2 + rowHeight * CGFloat(lines) + Swiss.grid
+    }
+
     func fittingContentSize() -> NSSize {
         if keyboard {
             let headW =
@@ -326,11 +334,12 @@ class CandidateWindowController {
             return
         }
 
-        // Flip above the cursor when the panel would fall off the bottom of
-        // the screen.
+        // Flip above the cursor when a full page would fall off the bottom
+        // of the screen — a full page, not this one, or the window would
+        // jump sides as the candidates come and go.
         let showAbove: Bool
         if let screen = NSScreen.main {
-            showAbove = cursorRect.origin.y - size.height < screen.visibleFrame.origin.y
+            showAbove = cursorRect.origin.y - listView.fullPageHeight < screen.visibleFrame.origin.y
         } else {
             showAbove = false
         }

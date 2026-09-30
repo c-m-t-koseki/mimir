@@ -249,15 +249,14 @@ impl PartLayer {
         Self { keys, ..self }
     }
 
-    /// The keys picking a candidate, in page order (the frontend labels
-    /// the window with them): capitals while the part is typed and in a
-    /// chain's window, where Shift picks.
-    pub fn select_keys(&self, engine: &InputMethodEngine) -> String {
-        let keys = self.keys.select.iter();
-        match self.mode == PartMode::Part && (composing(engine) || engine.chaining()) {
-            true => keys.map(|c| c.to_ascii_uppercase()).collect(),
-            false => keys.collect(),
-        }
+    /// The keys picking a candidate, in page order, as the frontend labels
+    /// the window with them: capitals, whatever state the window is in.
+    pub fn select_keys(&self) -> String {
+        self.keys
+            .select
+            .iter()
+            .map(|c| c.to_ascii_uppercase())
+            .collect()
     }
 
     pub fn with_skk_style(self, skk_style: bool) -> Self {
@@ -1587,12 +1586,7 @@ mod tests {
         text: &str,
     ) -> EngineResult {
         let at = shown.iter().position(|t| t == text).expect("on offer");
-        let key = layer
-            .select_keys(engine)
-            .chars()
-            .nth(at)
-            .unwrap()
-            .to_ascii_uppercase();
+        let key = layer.select_keys().chars().nth(at).unwrap();
         layer.process_key(
             engine,
             &KeyEvent::new(
@@ -1608,9 +1602,16 @@ mod tests {
         let (mut layer, mut engine) = history_setup();
         feed(&mut layer, &mut engine, "Kyouh");
         let shown = window(&layer.process_key(&mut engine, &press_char('a'))).unwrap();
-        // Cut where the word the typed reading runs into ends.
-        assert!(shown.contains(&"今日はいい".to_string()), "{shown:?}");
-        assert!(shown.contains(&"今日は寒いですね".to_string()), "{shown:?}");
+        // To each word end, shallow first: both entries' first word before
+        // the first one's second.
+        let at = |t: &str| {
+            shown
+                .iter()
+                .position(|s| s == t)
+                .unwrap_or_else(|| panic!("{t} in {shown:?}"))
+        };
+        assert!(at("今日はいい") < at("今日はいい天気ですね"));
+        assert!(at("今日は寒いですね") < at("今日はいい天気ですね"));
         let result = pick(&mut layer, &mut engine, &shown, "今日はいい");
         assert_eq!(commits(&result), "今日はいい");
         // Nothing typed, the entry's next word on offer.
@@ -2083,9 +2084,9 @@ mod tests {
         let result = layer.process_key(&mut engine, &press(Keysym::RETURN));
         assert_eq!(commits(&result), "きょうの天気");
         assert!(!learned(&engine).iter().any(|(r, _)| r == "きょうのてんき"));
-        // Completed to the end of the word きょう runs into.
+        // Completed to each word end past きょう.
         feed(&mut layer, &mut engine, "Kyou");
-        assert_eq!(engine.completions(3), vec!["きょうの".to_string()]);
+        assert_eq!(engine.completions(3), ["きょうの", "きょうの天気"]);
     }
 
     #[test]
@@ -2110,7 +2111,7 @@ mod tests {
             [("きょうのてんき".to_string(), "キョウのてんき".to_string())]
         );
         feed(&mut layer, &mut engine, "Kyou");
-        assert_eq!(engine.completions(3), vec!["キョウの".to_string()]);
+        assert_eq!(engine.completions(3), ["キョウの", "キョウのてんき"]);
     }
 
     #[test]
@@ -2190,7 +2191,7 @@ mod tests {
         settings.select = "asdfghjk".into();
         let (layer, mut engine) = setup();
         let mut layer = layer.with_keys(Keymap::parse(&settings).unwrap());
-        assert_eq!(layer.select_keys(&engine), "asdfghjk");
+        assert_eq!(layer.select_keys(), "ASDFGHJK");
         // A Ctrl chord commits in katakana too.
         feed(&mut layer, &mut engine, "Tesuto");
         let result = layer.process_key(&mut engine, &ctrl('o'));
@@ -2234,11 +2235,10 @@ mod tests {
             .expect("the window shows while typing");
         // What Ctrl+N opens on, the katakana fallback among it.
         assert!(shown.candidates().iter().any(|c| c.text == "コノ"));
-        assert_eq!(layer.select_keys(&engine), "JKFDUIRE");
+        assert_eq!(layer.select_keys(), "JKFDUIRE");
         let second = shown.candidates()[1].text.clone();
         assert_eq!(feed(&mut layer, &mut engine, "K"), second);
         assert_eq!(layer.mode(), PartMode::Plain);
-        assert_eq!(layer.select_keys(&engine), "jkfduire");
     }
 
     #[test]
