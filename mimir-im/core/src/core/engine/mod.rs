@@ -376,33 +376,28 @@ impl InputMethodEngine {
 
     /// Earlier commits whose reading extends `base` — longer readings only,
     /// and actual conversions (a kana phrase committed as typed completes
-    /// to nothing worth offering) — most used first, each cut at the end of
-    /// the word `base` runs into (今日はいい天気 for きょうはい: 今日はいい).
-    /// The rest follows a word at a time once one is taken
-    /// (`continue_chain`).
+    /// to nothing worth offering) — cut at each word end past `base`, so
+    /// how far to complete is a pick (きょうはい: 今日はいい, 今日はいい天気),
+    /// shallow first (`word_prefixes`). Taking one goes on from there a
+    /// word at a time (`continue_chain`).
     pub(super) fn history_completions(&self, base: &str) -> Vec<Candidate> {
         let Some(history) = &self.history else {
             return Vec::new();
         };
         let typed = base.chars().count();
-        let mut seen = HashSet::new();
-        history
+        let rows = history
             .prefix_lookup(base)
             .into_iter()
             .filter(|(reading, surface, _)| reading != base && reading != surface)
-            .filter_map(|(reading, surface, _)| {
-                let (to_r, to_s) = word_ends(&reading, &surface)
+            .map(|(reading, surface, _)| {
+                let ends = word_ends(&reading, &surface)
                     .into_iter()
-                    .find(|&(end, _)| end > typed)?;
-                Some(Candidate {
-                    text: surface.chars().take(to_s).collect(),
-                    reading: Some(reading.chars().take(to_r).collect()),
-                    source: Some(CandidateSource::Learning),
-                    description: None,
-                })
+                    .filter(|&(end, _)| end > typed)
+                    .collect();
+                (reading, surface, ends)
             })
-            .filter(|c| seen.insert(c.text.clone()))
-            .collect()
+            .collect();
+        word_prefixes(rows, (0, 0))
     }
 
     /// Remember the completions a window shows (see `offered_completions`).
@@ -449,33 +444,27 @@ impl InputMethodEngine {
         Some(self.enter_conversion_state("", list))
     }
 
-    /// The next word of each history entry starting with `reading` →
-    /// `text` at one of its word ends.
+    /// What follows `reading` → `text` in each history entry it begins at
+    /// one of the entry's word ends: to each further word end, shallow
+    /// first (`word_prefixes`).
     fn chain_words(&self, reading: &str, text: &str) -> Vec<Candidate> {
         let Some(history) = &self.history else {
             return Vec::new();
         };
         let at = (reading.chars().count(), text.chars().count());
-        let mut seen = HashSet::new();
-        history
+        let rows = history
             .prefix_lookup(reading)
             .into_iter()
             .filter(|(r, s, _)| r != reading && s.starts_with(text))
             .filter_map(|(r, s, _)| {
                 let ends = word_ends(&r, &s);
-                if !ends.contains(&at) {
-                    return None;
-                }
-                let &(to_r, to_s) = ends.iter().find(|&&(end, _)| end > at.0)?;
-                Some(Candidate {
-                    text: s.chars().skip(at.1).take(to_s - at.1).collect(),
-                    reading: Some(r.chars().skip(at.0).take(to_r - at.0).collect()),
-                    source: Some(CandidateSource::Learning),
-                    description: None,
+                ends.contains(&at).then(|| {
+                    let ends = ends.into_iter().filter(|&(end, _)| end > at.0).collect();
+                    (r, s, ends)
                 })
             })
-            .filter(|c| seen.insert(c.text.clone()))
-            .collect()
+            .collect();
+        word_prefixes(rows, at)
     }
 
     /// Let a chain go: what came after its commit was not its window.
@@ -1236,4 +1225,39 @@ impl Default for InputMethodEngine {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Candidates from history entries `(reading, surface, word ends)`, each
+/// from `from` (`(reading, surface)` chars) to one of its word ends, and
+/// shallow first: every entry's first word end, then every entry's second,
+/// … — a breadth-first walk, so where the entries branch each way shows
+/// before any goes deeper. Most used entries first at each depth.
+fn word_prefixes(
+    rows: Vec<(String, String, Vec<(usize, usize)>)>,
+    from: (usize, usize),
+) -> Vec<Candidate> {
+    let depth = rows
+        .iter()
+        .map(|(_, _, ends)| ends.len())
+        .max()
+        .unwrap_or(0);
+    let mut seen = HashSet::new();
+    let mut out = Vec::new();
+    for d in 0..depth {
+        for (reading, surface, ends) in &rows {
+            let Some(&(to_r, to_s)) = ends.get(d) else {
+                continue;
+            };
+            let text: String = surface.chars().skip(from.1).take(to_s - from.1).collect();
+            if seen.insert(text.clone()) {
+                out.push(Candidate {
+                    text,
+                    reading: Some(reading.chars().skip(from.0).take(to_r - from.0).collect()),
+                    source: Some(CandidateSource::Learning),
+                    description: None,
+                });
+            }
+        }
+    }
+    out
 }

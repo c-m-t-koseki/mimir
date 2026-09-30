@@ -386,26 +386,6 @@ impl InputMethodEngine {
             }
         }
 
-        // 1b. Earlier commits extending the reading, each to the end of the
-        //     word the typed reading runs into (history completion). What
-        //     is offered is remembered: taking one goes on to the entry's
-        //     next word (`continue_chain`). Apart from `predictive`, which
-        //     is the dictionary's guessing: these were all typed before.
-        if learning == LearningLookup::Use && pending.is_empty() {
-            let completions: Vec<Candidate> = self
-                .history_completions(reading)
-                .into_iter()
-                .take(MAX_LEARNING_CANDIDATES)
-                .collect();
-            self.offer_completions(&completions);
-            for c in completions {
-                builder.push(
-                    AnnotatedCandidate::new(c.text, CandidateSource::Learning)
-                        .with_reading(c.reading),
-                );
-            }
-        }
-
         // 2. User dictionary candidates (system dictionary follows the model
         //    in step 4, so the two are split here).
         let (user_dict, system_dict): (Vec<_>, Vec<_>) = self
@@ -436,6 +416,27 @@ impl InputMethodEngine {
         } else {
             for text in candidates {
                 builder.push(AnnotatedCandidate::new(text, CandidateSource::Model));
+            }
+        }
+
+        // 3b. Earlier commits extending the reading, to each word end (history
+        //     completion), a page at most: after the model's answers, which
+        //     the live head already leads with. What is offered is
+        //     remembered: taking one goes on to the entry's next words
+        //     (`continue_chain`). Apart from `predictive`, which is the
+        //     dictionary's guessing: these were all typed before.
+        if learning == LearningLookup::Use && pending.is_empty() {
+            let completions: Vec<Candidate> = self
+                .history_completions(reading)
+                .into_iter()
+                .take(CandidateList::DEFAULT_PAGE_SIZE)
+                .collect();
+            self.offer_completions(&completions);
+            for c in completions {
+                builder.push(
+                    AnnotatedCandidate::new(c.text, CandidateSource::Learning)
+                        .with_reading(c.reading),
+                );
             }
         }
 
