@@ -39,6 +39,13 @@ impl CandidateSource {
         }
     }
 
+    /// The label without its glyph (`辞書`), for a frontend that draws
+    /// the name on its own.
+    pub fn name(&self) -> &'static str {
+        let label = self.label();
+        label.split_once(' ').map_or(label, |(_, name)| name)
+    }
+
     /// Short glyph for tight spots like the Ctrl+R filter header in the
     /// conversion aux text. Empty for Fallback, which has no view of its
     /// own — its kana ride at the tail of the rewriter view.
