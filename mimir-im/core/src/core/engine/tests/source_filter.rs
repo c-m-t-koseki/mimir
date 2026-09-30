@@ -513,35 +513,25 @@ fn test_filter_resets_on_new_conversion() {
 }
 
 #[test]
-fn test_pending_tail_narrows_the_learning_view() {
-    // A pending consonant narrows the learning view like the dictionary
-    // one: the exact entry for the base reading is stale (the reading is
-    // about to grow), so it drops while a prediction the tail can still
-    // reach stays.
+fn test_the_learning_view_holds_the_exact_reading_only() {
+    // No predictions: 愛香 learned for あいか is not in the view for あい,
+    // and a pending consonant empties it (the exact entry for the base is
+    // about to be outgrown).
     let mut engine = engine_with_learned("あい", "愛");
     engine.learning.as_mut().unwrap().record("あいか", "愛香");
     engine.process_key(&press('a'));
     engine.process_key(&press('i'));
     engine.process_key(&press_key(Keysym::SPACE));
     cycle_expecting(&mut engine, true, CandidateSource::Learning);
-    assert_eq!(shown_texts(&engine), vec!["愛", "愛香"]);
+    assert_eq!(shown_texts(&engine), vec!["愛"]);
 
     let result = engine.process_key(&press('k'));
     let aux = last_aux_text(&result).expect("aux text action");
-    assert!(aux.contains("[変換:📝]"), "aux was: {aux}");
-    assert_eq!(shown_texts(&engine), vec!["愛香"]);
-
-    // Enter commits the prediction under its full reading — the typed
-    // tail was consumed by it, not silently dropped.
-    let result = engine.process_key(&press_key(Keysym::RETURN));
     assert!(
-        result
-            .actions
-            .iter()
-            .any(|a| matches!(a, EngineAction::Commit(text) if text == "愛香"))
+        aux.contains("[変換:📝]") && aux.contains("候補なし"),
+        "aux was: {aux}"
     );
 }
-
 #[test]
 fn test_stale_learning_candidate_cannot_swallow_the_tail() {
     // With no entry the tail can reach, the view empties instead of
@@ -762,37 +752,6 @@ fn test_dictionary_view_merges_both_dictionaries_user_first() {
             Some(CandidateSource::UserDictionary),
             Some(CandidateSource::Dictionary),
         ]
-    );
-}
-
-#[test]
-fn test_mid_caret_typing_does_not_tail_predict() {
-    // With the caret mid-composition the typed run is not a tail: あk|い
-    // settles to あkい, so the narrowed view must not offer あい + か…
-    // predictions whose commit would replace the composition with the
-    // wrong reading.
-    let mut engine = engine_with_learned("あいか", "愛香");
-    engine.process_key(&press('a'));
-    engine.process_key(&press('i'));
-    engine.process_key(&press_key(Keysym::LEFT));
-    engine.process_key(&press_ctrl(Keysym::KEY_T)); // 📝 view for あい
-    assert_eq!(shown_texts(&engine), vec!["愛香"]);
-
-    // `k` lands mid-buffer (あk|い): the prediction disappears instead of
-    // narrowing as if the reading were あい + tail k.
-    let result = engine.process_key(&press('k'));
-    let aux = last_aux_text(&result).expect("aux text action");
-    assert!(
-        aux.contains("[変換:📝]") && aux.contains("候補なし"),
-        "aux was: {aux}"
-    );
-
-    let result = engine.process_key(&press_key(Keysym::RETURN));
-    assert!(
-        result
-            .actions
-            .iter()
-            .any(|a| matches!(a, EngineAction::Commit(text) if text == "あkい"))
     );
 }
 

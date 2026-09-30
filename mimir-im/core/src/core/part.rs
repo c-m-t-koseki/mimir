@@ -34,6 +34,7 @@ use std::time::{Duration, Instant};
 use super::engine::{EngineAction, EngineResult, InputMethodEngine};
 use super::keycode::{KeyEvent, KeyModifiers, Keysym};
 use super::keymap::Keymap;
+use super::phrase::{align, next_word};
 use super::preedit::{AttributeType, Preedit, PreeditAttribute};
 use super::state::InputState;
 use crate::config::Settings;
@@ -249,11 +250,11 @@ impl PartLayer {
     }
 
     /// The keys picking a candidate, in page order (the frontend labels
-    /// the window with them): capitals while the part is typed, where
-    /// Shift picks.
+    /// the window with them): capitals while the part is typed and in a
+    /// chain's window, where Shift picks.
     pub fn select_keys(&self, engine: &InputMethodEngine) -> String {
         let keys = self.keys.select.iter();
-        match self.mode == PartMode::Part && composing(engine) {
+        match self.mode == PartMode::Part && (composing(engine) || engine.chaining()) {
             true => keys.map(|c| c.to_ascii_uppercase()).collect(),
             false => keys.collect(),
         }
@@ -320,6 +321,7 @@ impl PartLayer {
             .then(|| deletes_a_lone_kana(engine));
         }
         let result = self.dispatch(engine, key);
+        let result = self.follow_chain(engine, result);
         let result = self.preview_conversion(engine, result);
         // What showed before the rewrite matters for this key only.
         if key.is_press && !key.keysym.is_modifier() {
@@ -336,6 +338,57 @@ impl PartLayer {
             result.consumed = true;
         }
         result
+    }
+
+    /// A completion just taken (or a word of one): the history entry's next
+    /// word follows in a window of its own, with nothing typed. Any other
+    /// state lets a chain go.
+    fn follow_chain(
+        &mut self,
+        engine: &mut InputMethodEngine,
+        result: EngineResult,
+    ) -> EngineResult {
+        if !matches!(engine.state(), InputState::Empty) {
+            if !engine.chaining() {
+                engine.forget_chain();
+            }
+            return result;
+        }
+        let Some(next) = engine.continue_chain() else {
+            return result;
+        };
+        self.enter(engine, PartMode::Part);
+        self.stepped = false;
+        merge(result, next)
+    }
+
+    /// Keys in a chain's window: Ctrl+N / Ctrl+P / Ctrl+I step, Shift + a
+    /// select key picks, and once stepped, Enter / Space commit. Anything
+    /// else closes it without committing and goes on as typed (Ctrl+G /
+    /// Escape only close it). `None` for the keys the window takes.
+    fn chain_key(
+        &mut self,
+        engine: &mut InputMethodEngine,
+        key: &KeyEvent,
+    ) -> Option<EngineResult> {
+        let k = &self.keys;
+        let picks = typed_char(key).is_some_and(|ch| {
+            (key.modifiers.shift_key || ch.is_ascii_uppercase())
+                && k.select_index(ch.to_ascii_lowercase()).is_some()
+        });
+        let steps = k.next.hit(key) || k.prev.hit(key);
+        let commits = self.stepped && (k.commit.hit(key) || k.close.hit(key));
+        if picks || steps || commits {
+            return None;
+        }
+        let cancel = k.cancel.hit(key);
+        let mut closed = engine.end_chain();
+        self.enter(engine, PartMode::Plain);
+        if cancel {
+            closed.consumed = true;
+            return Some(closed);
+        }
+        Some(merge(closed, self.process_key(engine, key)))
     }
 
     /// While a part is typed, its window shows what a conversion would
@@ -611,6 +664,11 @@ impl PartLayer {
     /// Focus loss / explicit commit: commit what is open, emitting the same
     /// cleanup actions as the engine's own commit. A part ends with it.
     pub fn flush(&mut self, engine: &mut InputMethodEngine) -> EngineResult {
+        // A chain's window offers, nothing was typed: it goes uncommitted.
+        if engine.chaining() {
+            self.enter(engine, PartMode::Plain);
+            return engine.end_chain();
+        }
         let result = match (self.mode, engine.state()) {
             (_, InputState::Empty) => engine.commit_result(),
             // The part right of the caret goes too.
@@ -1048,6 +1106,11 @@ impl PartLayer {
     }
 
     fn conversion_key(&mut self, engine: &mut InputMethodEngine, key: &KeyEvent) -> EngineResult {
+        if engine.chaining()
+            && let Some(result) = self.chain_key(engine, key)
+        {
+            return result;
+        }
         if self.keys.next.hit(key) {
             self.stepped = true;
             return engine.process_key(&press(Keysym::TAB));
@@ -1293,122 +1356,6 @@ fn part_opener(key: &KeyEvent, ch: char) -> Option<Option<char>> {
         .then(|| Some(ch.to_ascii_lowercase()))
 }
 
-/// Particles that end a word (今日は, 東京には). で and か are left out: they
-/// start です and かも.
-const PARTICLES: &str = "はがをにともへのや";
-/// The ones also taken as left over from the word before at the start of
-/// the rest — not と も や, which start とても, もう, やはり.
-const LEAD_PARTICLES: &str = "はがをにへの";
-
-/// The next word of `reading`, given `surface`, its conversion: `(lead,
-/// end)` in reading chars, where `..lead` are particles belonging to the
-/// word before (left over by where the last one was cut) and `lead..end`
-/// is the word. Leading particles count only `after_content`: when what was
-/// committed before ends in kanji or katakana. A word runs until kanji or
-/// katakana follow hiragana, or until the hiragana after its particles
-/// (今日は|いい|天気ですね). The whole rest when the two can't be aligned.
-fn next_word(reading: &str, surface: &str, after_content: bool) -> (usize, usize) {
-    let r: Vec<char> = reading.chars().collect();
-    let particle = |c: char| PARTICLES.contains(c);
-    let Some(units) = align(reading, surface) else {
-        return (0, r.len());
-    };
-    let units: Vec<(usize, bool, char)> = units
-        .iter()
-        .map(|u| (u.reading_end, u.kana, u.last))
-        .collect();
-    // Leading particles, when more follows.
-    let lead_units = units
-        .iter()
-        .take_while(|&&(_, h, c)| after_content && h && LEAD_PARTICLES.contains(c))
-        .count();
-    let lead_units = if lead_units == units.len() {
-        0
-    } else {
-        lead_units
-    };
-    let lead = if lead_units == 0 {
-        0
-    } else {
-        units[lead_units - 1].0
-    };
-    // Then the word: content, then the particles right after a kanji or
-    // katakana run (not inside a hiragana word: おにぎり, とても).
-    let mut end = r.len();
-    let mut in_particles = false;
-    for k in lead_units + 1..units.len() {
-        let (_, is_hira, c) = units[k];
-        let (prev_end, prev_hira, _) = units[k - 1];
-        let next = if is_hira {
-            in_particles && !particle(c)
-        } else {
-            prev_hira
-        };
-        if next {
-            end = prev_end;
-            break;
-        }
-        in_particles = is_hira && particle(c) && (!prev_hira || in_particles);
-    }
-    (lead, end)
-}
-
-/// One piece of a conversion lined up with its reading: a kana standing for
-/// itself, or a kanji/katakana run standing for the reading up to the kana
-/// that follows it. Ends are in chars.
-#[derive(Debug, Clone, Copy)]
-struct Unit {
-    reading_end: usize,
-    surface_end: usize,
-    kana: bool,
-    last: char,
-}
-
-fn is_hiragana(c: char) -> bool {
-    matches!(c, 'ぁ'..='ゖ' | 'ー')
-}
-
-/// Line `surface` up with `reading`, `None` when they don't match.
-fn align(reading: &str, surface: &str) -> Option<Vec<Unit>> {
-    let r: Vec<char> = reading.chars().collect();
-    let s: Vec<char> = surface.chars().collect();
-    let mut units = Vec::new();
-    let (mut i, mut j) = (0, 0);
-    while j < s.len() {
-        if i < r.len() && is_hiragana(s[j]) && s[j] == r[i] {
-            i += 1;
-            j += 1;
-            units.push(Unit {
-                reading_end: i,
-                surface_end: j,
-                kana: true,
-                last: s[j - 1],
-            });
-            continue;
-        }
-        let mut j2 = j + 1;
-        while j2 < s.len() && !is_hiragana(s[j2]) {
-            j2 += 1;
-        }
-        if i >= r.len() {
-            return None;
-        }
-        i = if j2 == s.len() {
-            r.len()
-        } else {
-            (i + 1..r.len()).find(|&k| r[k] == s[j2])?
-        };
-        j = j2;
-        units.push(Unit {
-            reading_end: i,
-            surface_end: j,
-            kana: false,
-            last: s[j - 1],
-        });
-    }
-    (i == r.len()).then_some(units)
-}
-
 /// The last kanji run of `surface`: its span in `surface` (chars) and its
 /// reading.
 fn last_kanji(reading: &str, surface: &str) -> Option<(usize, usize, String)> {
@@ -1611,6 +1558,114 @@ mod tests {
         let mut layer = PartLayer::new();
         layer.attach(&mut engine);
         (layer, engine)
+    }
+
+    /// The window a key's result shows, as texts.
+    fn window(result: &EngineResult) -> Option<Vec<String>> {
+        result.actions.iter().find_map(|a| match a {
+            EngineAction::ShowCandidates(list) => {
+                Some(list.candidates().iter().map(|c| c.text.clone()).collect())
+            }
+            _ => None,
+        })
+    }
+
+    /// A layer whose history holds 今日はいい天気ですね and 今日は寒いですね.
+    fn history_setup() -> (PartLayer, InputMethodEngine) {
+        let (layer, mut engine) = setup();
+        engine_learning_on(&mut engine);
+        engine.note_commit("きょうはいいてんきですね", "今日はいい天気ですね");
+        engine.note_commit("きょうはさむいですね", "今日は寒いですね");
+        (layer, engine)
+    }
+
+    /// Pick `text` from the window `shown` with Shift + its select key.
+    fn pick(
+        layer: &mut PartLayer,
+        engine: &mut InputMethodEngine,
+        shown: &[String],
+        text: &str,
+    ) -> EngineResult {
+        let at = shown.iter().position(|t| t == text).expect("on offer");
+        let key = layer
+            .select_keys(engine)
+            .chars()
+            .nth(at)
+            .unwrap()
+            .to_ascii_uppercase();
+        layer.process_key(
+            engine,
+            &KeyEvent::new(
+                Keysym(key as u32),
+                KeyModifiers::new().with_shift(true),
+                true,
+            ),
+        )
+    }
+
+    #[test]
+    fn the_history_completes_to_the_end_of_the_word_then_word_by_word() {
+        let (mut layer, mut engine) = history_setup();
+        feed(&mut layer, &mut engine, "Kyouh");
+        let shown = window(&layer.process_key(&mut engine, &press_char('a'))).unwrap();
+        // Cut where the word the typed reading runs into ends.
+        assert!(shown.contains(&"今日はいい".to_string()), "{shown:?}");
+        assert!(shown.contains(&"今日は寒いですね".to_string()), "{shown:?}");
+        let result = pick(&mut layer, &mut engine, &shown, "今日はいい");
+        assert_eq!(commits(&result), "今日はいい");
+        // Nothing typed, the entry's next word on offer.
+        assert!(engine.chaining());
+        assert_eq!(window(&result).unwrap(), ["天気ですね"]);
+        let result = pick(
+            &mut layer,
+            &mut engine,
+            &["天気ですね".into()],
+            "天気ですね",
+        );
+        assert_eq!(commits(&result), "天気ですね");
+        // The entry is done.
+        assert!(!engine.chaining());
+        assert!(matches!(engine.state(), InputState::Empty));
+        assert_eq!(layer.mode(), PartMode::Plain);
+    }
+
+    #[test]
+    fn a_chain_steps_with_ctrl_n_and_other_keys_close_it_uncommitted() {
+        let (mut layer, mut engine) = history_setup();
+        engine.note_commit("きょうはいいひ", "今日はいい日");
+        feed(&mut layer, &mut engine, "Kyouh");
+        let shown = window(&layer.process_key(&mut engine, &press_char('a'))).unwrap();
+        let result = pick(&mut layer, &mut engine, &shown, "今日はいい");
+        let next = window(&result).unwrap();
+        assert_eq!(next.len(), 2, "{next:?}");
+        // Unstepped, Enter is not the window's: it closes it and goes on.
+        let result = layer.process_key(&mut engine, &press(Keysym::RETURN));
+        assert_eq!(commits(&result), "");
+        assert!(!result.consumed);
+        assert!(!engine.chaining());
+        // Stepped with Ctrl+N (Ctrl+I too), Enter commits the selection.
+        feed(&mut layer, &mut engine, "Kyouh");
+        let shown = window(&layer.process_key(&mut engine, &press_char('a'))).unwrap();
+        pick(&mut layer, &mut engine, &shown, "今日はいい");
+        layer.process_key(&mut engine, &ctrl('n'));
+        let result = layer.process_key(&mut engine, &press(Keysym::RETURN));
+        assert_eq!(commits(&result), next[1]);
+        // A letter closes it and types on (plain kana, in SKK style).
+        feed(&mut layer, &mut engine, "Kyouh");
+        let shown = window(&layer.process_key(&mut engine, &press_char('a'))).unwrap();
+        pick(&mut layer, &mut engine, &shown, "今日はいい");
+        let result = layer.process_key(&mut engine, &press_char('a'));
+        assert_eq!(commits(&result), "あ");
+        assert!(!engine.chaining());
+    }
+
+    #[test]
+    fn a_word_typed_in_full_starts_no_chain() {
+        let (mut layer, mut engine) = history_setup();
+        // 今日は committed as converted: no completion taken.
+        let result = feed(&mut layer, &mut engine, "Kyouha ");
+        assert!(!result.is_empty());
+        assert!(!engine.chaining());
     }
 
     #[test]
@@ -2028,8 +2083,9 @@ mod tests {
         let result = layer.process_key(&mut engine, &press(Keysym::RETURN));
         assert_eq!(commits(&result), "きょうの天気");
         assert!(!learned(&engine).iter().any(|(r, _)| r == "きょうのてんき"));
+        // Completed to the end of the word きょう runs into.
         feed(&mut layer, &mut engine, "Kyou");
-        assert_eq!(engine.completions(3), vec!["きょうの天気".to_string()]);
+        assert_eq!(engine.completions(3), vec!["きょうの".to_string()]);
     }
 
     #[test]
@@ -2054,7 +2110,7 @@ mod tests {
             [("きょうのてんき".to_string(), "キョウのてんき".to_string())]
         );
         feed(&mut layer, &mut engine, "Kyou");
-        assert_eq!(engine.completions(3), vec!["キョウのてんき".to_string()]);
+        assert_eq!(engine.completions(3), vec!["キョウの".to_string()]);
     }
 
     #[test]

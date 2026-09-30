@@ -376,37 +376,19 @@ fn ctrl_delete_ignores_non_learning_candidate() {
 }
 
 #[test]
-fn ctrl_delete_removes_prefix_matched_entry_by_full_reading() {
-    // A prefix-matched learning candidate carries its own (longer) reading;
-    // deletion must remove the cache entry under that full reading.
+fn a_learned_word_completes_nothing() {
+    // Learning holds picks for their own reading only: 挨拶 learned for
+    // あいさつ is no candidate for あい (completing is the history's).
     let mut engine = engine_with_learned("あいさつ", "挨拶");
-
     engine.process_key(&press('a'));
     engine.process_key(&press('i'));
     engine.process_key(&press_key(Keysym::SPACE));
-
-    let selected = engine
-        .state()
-        .candidates()
-        .unwrap()
-        .selected()
-        .unwrap()
-        .clone();
-    assert_eq!(selected.text, "挨拶");
-    assert_eq!(selected.reading.as_deref(), Some("あいさつ"));
-    assert!(selected.is_deletable());
-
-    engine.process_key(&press_ctrl(Keysym::DELETE));
+    let candidates = engine.state().candidates().unwrap().candidates().to_vec();
     assert!(
-        engine
-            .learning
-            .as_ref()
-            .unwrap()
-            .lookup("あいさつ")
-            .is_empty()
+        !candidates.iter().any(|c| c.text == "挨拶"),
+        "{candidates:?}"
     );
 }
-
 #[test]
 fn aux_shows_delete_hint_only_for_learning_candidate() {
     let mut engine = engine_with_learned("あい", "藍");
