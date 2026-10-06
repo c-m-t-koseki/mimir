@@ -55,6 +55,7 @@ class MimirInputController: IMKInputController {
         // かな key. Never consume flagsChanged: the system must keep an
         // accurate view of modifier state.
         if event.type == .flagsChanged {
+            NSLog("MimirIME: DEBUG flags keyCode=\(event.keyCode) flags=\(event.modifierFlags.intersection(.deviceIndependentFlagsMask).rawValue)")
             let fired = rightCommandTap.handleFlagsChanged(
                 keyCode: event.keyCode,
                 flags: event.modifierFlags.intersection(.deviceIndependentFlagsMask)
@@ -91,7 +92,7 @@ class MimirInputController: IMKInputController {
             let key = EngineKeyEvent(keysym: KeyCodeMap.eisuKeysym, modifiers: KeyModifiers())
             if let result = engineClient.processKeySync(key) {
                 apply(actions: result.actions, client: client)
-                showModeChange(result.mode, client: client)
+                showModeChange(result.mode, client: client, cause: "eisu keyCode=\(event.keyCode)")
                 showHint(result.hint, client: client)
             }
             return true
@@ -122,7 +123,7 @@ class MimirInputController: IMKInputController {
         apply(actions: result.actions, client: client)
         showRuby(result.ruby, client: client)
         scheduleRefresh(after: result.refreshMs, client: client)
-        showModeChange(result.mode, client: client)
+        showModeChange(result.mode, client: client, cause: "key keysym=\(key.keysym) keyCode=\(event.keyCode)")
         showHint(result.hint, client: client)
         if !result.consumed {
             typed.passedThrough(key)
@@ -214,8 +215,9 @@ class MimirInputController: IMKInputController {
     /// matching input mode, and show the badge. macOS shows its own indicator
     /// only when it switched the mode itself (`badge: false`); our
     /// `selectMode` gets none.
-    private func showModeChange(_ mode: String?, client: any IMKTextInput, badge: Bool = true) {
+    private func showModeChange(_ mode: String?, client: any IMKTextInput, badge: Bool = true, cause: String = "?") {
         guard let mode, mode != Self.lastMode else { return }
+        NSLog("MimirIME: DEBUG mode \(Self.lastMode) -> \(mode) by \(cause) in \(client.bundleIdentifier() ?? "?")")
         Self.lastMode = mode
         if badge { showBadge(client: client) }
         client.selectMode(mode == "ascii" ? Self.romanModeID : Self.japaneseModeID)
@@ -237,6 +239,7 @@ class MimirInputController: IMKInputController {
             return
         }
         let wantASCII = modeID == Self.romanModeID
+        NSLog("MimirIME: DEBUG setValue \(modeID) in \(client.bundleIdentifier() ?? "?") engine=\(Self.lastMode)")
         guard wantASCII != (Self.lastMode == "ascii") else { return }
         Self.lastSwitch = (from: Self.lastMode, app: client.bundleIdentifier(), at: Date())
         let keysym = wantASCII ? KeyCodeMap.eisuKeysym : KeyCodeMap.superRKeysym
@@ -244,7 +247,7 @@ class MimirInputController: IMKInputController {
             EngineKeyEvent(keysym: keysym, modifiers: KeyModifiers()))
         {
             apply(actions: result.actions, client: client)
-            showModeChange(result.mode, client: client, badge: false)
+            showModeChange(result.mode, client: client, badge: false, cause: "setValue")
         }
     }
 
@@ -254,7 +257,7 @@ class MimirInputController: IMKInputController {
         let key = EngineKeyEvent(keysym: KeyCodeMap.superRKeysym, modifiers: KeyModifiers())
         if let result = engineClient.processKeySync(key) {
             apply(actions: result.actions, client: client)
-            showModeChange(result.mode, client: client)
+            showModeChange(result.mode, client: client, cause: "kana toggle (かな key or right-⌘ tap)")
             showHint(result.hint, client: client)
         }
     }
@@ -279,6 +282,7 @@ class MimirInputController: IMKInputController {
     override func activateServer(_ sender: Any!) {
         super.activateServer(sender)
         guard let client = sender as? (any IMKTextInput) else { return }
+        NSLog("MimirIME: DEBUG activate \(client.bundleIdentifier() ?? "?") engine=\(Self.lastMode)")
         // A switch macOS made just before focus moved to another app is a
         // stray ⌘ tap on the way to ⌘-Tab (Karabiner turns a lone ⌘ tap into
         // 英数 / かな, and a ⌘ pressed twice starts with one): take it back.
@@ -290,6 +294,7 @@ class MimirInputController: IMKInputController {
                 EngineKeyEvent(keysym: keysym, modifiers: KeyModifiers()))
             {
                 apply(actions: result.actions, client: client)
+                NSLog("MimirIME: DEBUG took back \(Self.lastMode) -> \(result.mode ?? "?") on the way to \(client.bundleIdentifier() ?? "?")")
                 Self.lastMode = result.mode ?? Self.lastMode
             }
         }
