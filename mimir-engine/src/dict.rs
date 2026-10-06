@@ -389,6 +389,11 @@ impl Dictionary {
         })
     }
 
+    /// Every candidate in the dictionary, in entry order.
+    pub fn candidates(&self) -> impl Iterator<Item = &Candidate> {
+        self.entries.iter().flat_map(|e| &e.candidates)
+    }
+
     /// Write all entries in the dictionary to `writer` (for inspection/debugging).
     ///
     /// Each line is tab-separated: `reading\tsurface\tscore`.

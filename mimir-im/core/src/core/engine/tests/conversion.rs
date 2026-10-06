@@ -328,3 +328,40 @@ fn a_typo_offers_the_retyped_reading_next_to_what_was_typed() {
     );
     assert_eq!(candidates[1].reading.as_deref(), Some("ございます"));
 }
+
+#[test]
+fn english_typed_as_romaji_is_offered_spelled_out() {
+    let mut engine = InputMethodEngine::new();
+    engine.dicts.system = Some(dict_from_json(
+        r#"[{"reading":"やふー","candidates":[{"surface":"YAHOO","score":2.0},{"surface":"Yahoo","score":1.0}]},
+            {"reading":"すし","candidates":[{"surface":"Sushi","score":1.0}]}]"#,
+    ));
+    engine.init_english_words();
+    // The best-scored spelling; romaji that reads as Japanese is left out.
+    assert_eq!(
+        engine.dicts.english.get("やほお").map(String::as_str),
+        Some("Yahoo")
+    );
+    assert!(!engine.dicts.english.contains_key("すし"));
+
+    for ch in "yahoochiebukuro".chars() {
+        engine.process_key(&press(ch));
+    }
+    engine.process_key(&press_key(Keysym::SPACE));
+    let candidates = engine.state().candidates().unwrap().candidates().to_vec();
+    assert_eq!(candidates[0].text, "やほおちえぶくろ");
+    assert_eq!(candidates[1].text, "Yahooちえぶくろ");
+    assert_eq!(
+        candidates[1].description.as_deref(),
+        Some("英字: Yahooちえぶくろ")
+    );
+
+    // Kana the conversion made Japanese of is not English.
+    let spell = super::super::conversion::spell_english;
+    let words = &engine.dicts.english;
+    assert_eq!(
+        spell("やほおで", "やほおで", words).as_deref(),
+        Some("Yahooで")
+    );
+    assert_eq!(spell("やほおで", "夜頬で", words), None);
+}

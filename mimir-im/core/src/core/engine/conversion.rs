@@ -2,7 +2,7 @@
 //! handling, and commit. Model dispatch lives in the sibling `model`
 //! module, the Ctrl+R source views in `filter`, live chunking in `chunk`.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use tracing::debug;
 
@@ -190,6 +190,28 @@ impl InputMethodEngine {
             .collect();
         let at = candidates.len().min(1);
         candidates.splice(at..at, retyped);
+
+        // English typed as romaji (yahoo → やほお): the same reading with
+        // the word spelled out, next to the head. Recorded under the typed
+        // reading, so once picked it heads the list itself.
+        let head = candidates
+            .first()
+            .map_or(reading.as_str(), |c| c.text.as_str());
+        if let Some(spelled) = spell_english(&reading, head, &self.dicts.english) {
+            let text = self
+                .model_candidates(&spelled, 1)
+                .into_iter()
+                .next()
+                .unwrap_or_else(|| spelled.clone());
+            if !candidates.iter().any(|c| c.text == text) {
+                let at = candidates.len().min(1);
+                candidates.insert(
+                    at,
+                    AnnotatedCandidate::new(text, CandidateSource::Model)
+                        .with_description(Some(format!("英字: {spelled}"))),
+                );
+            }
+        }
 
         if candidates.is_empty() {
             return None;
@@ -1059,4 +1081,46 @@ pub(super) fn retypings(reading: &str, romaji: &mimir_engine::RomajiConverter) -
     out.push(format!("{head}{tail}"));
     out.dedup();
     out
+}
+
+/// `reading` with every English word typed as romaji spelled out
+/// (やほおちえぶくろ → Yahooちえぶくろ), taking the longest word at each
+/// position, left to right; `None` when there is none.
+///
+/// A word whose romaji is all kana counts only where `head` (what the
+/// conversion would show) left that kana as typed: うにいく is a word, but
+/// not inside ほっかいどうにいく, which the model made 北海道に行く. One that
+/// strands a letter (ぎてゅb) is English wherever it appears.
+// ponytail: a word typed right before a vowel merges with it as romaji
+// (`githubapi` → ぎてゅばぴ) and is not found; split on raw keystrokes if
+// that turns out to matter.
+pub(super) fn spell_english(
+    reading: &str,
+    head: &str,
+    words: &HashMap<String, String>,
+) -> Option<String> {
+    let longest = words.keys().map(|k| k.chars().count()).max()?;
+    let chars: Vec<char> = reading.chars().collect();
+    let mut out = String::new();
+    let mut found = false;
+    let mut i = 0;
+    while i < chars.len() {
+        let word = (1..=longest.min(chars.len() - i)).rev().find_map(|n| {
+            let key: String = chars[i..i + n].iter().collect();
+            let word = words.get(&key)?;
+            (key.chars().any(|c| c.is_ascii()) || head.contains(&key)).then_some((n, word))
+        });
+        match word {
+            Some((n, w)) => {
+                out.push_str(w);
+                found = true;
+                i += n;
+            }
+            None => {
+                out.push(chars[i]);
+                i += 1;
+            }
+        }
+    }
+    found.then_some(out)
 }

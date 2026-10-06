@@ -1,5 +1,6 @@
 //! Engine initialization (model loading, dictionary setup)
 
+use std::collections::HashMap;
 use std::sync::mpsc;
 
 use anyhow::{Context, Result};
@@ -9,6 +10,10 @@ use tracing::debug;
 use crate::config::settings::StrategyMode;
 
 use super::*;
+
+/// Shortest English word offered for romaji typed in kana mode: shorter
+/// spellings (`kana`, `sake`) collide with Japanese too often.
+const MIN_ENGLISH_LETTERS: usize = 4;
 
 /// Converters produced by the background model-loading thread, handed to the
 /// engine through the `model_loading` channel.
@@ -85,6 +90,7 @@ impl InputMethodEngine {
     pub fn init_data_from_settings(&mut self, settings: &Settings) {
         self.init_system_dictionary(settings.conversion.dict_path.as_deref());
         self.init_user_dictionaries();
+        self.init_english_words();
         self.init_learning_cache(
             settings.learning.enabled,
             LearningConfig {
@@ -325,5 +331,45 @@ impl InputMethodEngine {
                 debug!("Failed to merge user dictionaries: {}", e);
             }
         }
+    }
+
+    /// Index the English words the dictionaries spell (`Yahoo`, `GitHub`)
+    /// by what their letters become typed as romaji, so `yahoochiebukuro`
+    /// can offer `Yahoo知恵袋` without a dictionary entry for it.
+    ///
+    /// Short words, and words whose romaji is the start of a Japanese
+    /// reading (`sushi` → すし, `hokkaido` → ほっかいど), are left out:
+    /// typing those means the Japanese word far more often than the English
+    /// one. User dictionary first, then the best-scored system spelling.
+    pub fn init_english_words(&mut self) {
+        let romaji = &self.converters.romaji;
+        let is_reading = |key: &str| {
+            [&self.dicts.system, &self.dicts.user]
+                .into_iter()
+                .flatten()
+                .any(|d| {
+                    d.exact_match_search(key).is_some() || !d.predictive_search(key, 1).is_empty()
+                })
+        };
+        let mut words: HashMap<String, (f32, String)> = HashMap::new();
+        for (dict, is_user) in [(&self.dicts.user, true), (&self.dicts.system, false)] {
+            let Some(dict) = dict else { continue };
+            for cand in dict.candidates() {
+                let surface = &cand.surface;
+                if surface.len() < MIN_ENGLISH_LETTERS
+                    || !surface.bytes().all(|b| b.is_ascii_alphabetic())
+                {
+                    continue;
+                }
+                let key = romaji.convert_flush(&surface.to_ascii_lowercase());
+                let score = if is_user { f32::MIN } else { cand.score };
+                if words.get(&key).is_some_and(|(best, _)| *best <= score) {
+                    continue;
+                }
+                words.insert(key, (score, surface.clone()));
+            }
+        }
+        words.retain(|key, _| mimir_engine::contains_kana(key) && !is_reading(key));
+        self.dicts.english = words.into_iter().map(|(k, (_, w))| (k, w)).collect();
     }
 }
