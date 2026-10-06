@@ -24,9 +24,9 @@ impl InputMethodEngine {
 
     /// Handle backspace in composing mode
     pub(super) fn backspace_composing(&mut self) -> EngineResult {
-        // Remove one display character before the cursor: a single-character
-        // element vanishes whole, re-exposing the live element before it
-        // (`ytko` → BS → `o` → 「yと」); きょ is truncated per character.
+        // Remove one display character before the cursor, and with a kana
+        // the consonants stranded before it (「あっpぇ」 → 「あっ」); きょ is
+        // truncated per character.
         let reading_before = self.input_buf.reading();
         if !self.edit_with_chunk_breaks(|e| e.input_buf.backspace(&e.converters.romaji)) {
             // Nothing to delete

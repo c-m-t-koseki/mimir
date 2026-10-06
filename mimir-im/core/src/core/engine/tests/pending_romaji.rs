@@ -66,17 +66,15 @@ fn test_editing_scenarios() {
             "ykt_backspace_then_o",
             &[("ykt", "ykt"), ("⌫", "yk"), ("o", "yこ")],
         ),
-        // Deleting a converted element re-exposes the live consonants
-        // before it, one conversion at a time
+        // Deleting a kana takes the consonants stranded before it along
+        // (apple's `pl` became pぇ: no lone `p` is left behind)
         (
-            "ytko_backspace_recombines_stepwise",
-            &[
-                ("ytko", "ytこ"),
-                ("⌫", "yt"),
-                ("o", "yと"),
-                ("⌫", "y"),
-                ("o", "よ"),
-            ],
+            "ytko_backspace_drops_stranded_consonants",
+            &[("ytko", "ytこ"), ("⌫", "∅")],
+        ),
+        (
+            "apple_backspace_drops_stranded_p",
+            &[("apple", "あっpぇ"), ("⌫", "あっ"), ("ka", "あっか")],
         ),
         // A multi-key rule prefix survives deletion of the element after it
         (
@@ -151,10 +149,11 @@ fn test_editing_scenarios() {
             "delete_separator_fires_sokuon",
             &[("yt1t", "yt1t"), ("←⌫", "yっt@2"), ("⇥o", "yっと")],
         ),
-        // A doubled consonant after a rule prefix keeps the prefix alive
+        // A doubled consonant after a rule prefix keeps the prefix alive;
+        // deleting the っ takes the stranded prefix with it
         (
             "prefixed_double_consonant_keeps_prefix",
-            &[("tyy", "tっy"), ("⌫", "tっ"), ("⌫", "t"), ("a", "た")],
+            &[("tyy", "tっy"), ("⌫", "tっ"), ("⌫", "∅")],
         ),
         // Returning from conversion keeps the reading editable
         (
