@@ -365,3 +365,16 @@ fn english_typed_as_romaji_is_offered_spelled_out() {
     );
     assert_eq!(spell("やほおで", "夜頬で", words), None);
 }
+
+#[test]
+fn english_stranding_a_letter_converts_live_as_its_own_chunk() {
+    let mut engine = InputMethodEngine::new();
+    engine.dicts.system = Some(dict_from_json(
+        r#"[{"reading":"あっぷる","candidates":[{"surface":"Apple","score":1.0}]}]"#,
+    ));
+    engine.init_english_words();
+    // あっ | p | ぇに would reach the model as Japanese; Apple is one chunk.
+    let chars: Vec<char> = "あっpぇに".chars().collect();
+    assert_eq!(engine.split_chunks(&chars), ["あっpぇ", "に"]);
+    assert_eq!(engine.convert_on_chunk_grid(&chars, ""), "Appleに");
+}
