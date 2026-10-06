@@ -62,6 +62,21 @@ IME本体(コアエンジン + 各プラットフォームのフロントエン�
 - [変換モデルの比較](docs/model-bench.md) — AJIMEE-Bench での精度と速度
 - [Windows 版](docs/windows.md) — 構成、ビルドとインストール、今できること
 
+## upstream との関係
+
+Mimir は、[togatoga/karukan](https://github.com/togatoga/karukan)（Karukan、作者 togatoga）を fork したものです。ニューラルかな漢字変換のエンジン、ライブ変換と Chunk、変換学習、システム辞書、Mozc から移植した候補リライター、絵文字入力、fcitx5 版と macOS 版の土台、CLI ツールは karukan のものです。
+
+fork したのは karukan の `3828dd2`（2026-09-19、「モデル定義をconfig.tomlに一本化してmodels.tomlを廃止する」）の時点です。そこから、この fork で主に次のことを変えています。
+
+- **名前:** crate・バイナリ・設定とデータの置き場・macOS のバンドル ID を、karukan から Mimir に変えた（設定は `~/Library/Application Support/com.mimir.mimir-im/` など）。アイコンも替えた
+- **macOS の入力:** 漢字パート入力と SKK 式、選択キー（`j k f d u i r e`）の候補窓、IME の中での英数・かなの切り替え（入力モードを2つ登録）、`z` 入力、単語登録、補完、設定ウィンドウ
+- **学習と補完:** 学習するのはモデルの答えと違う語を選んだときだけにし、補完は別の入力の履歴（`history.tsv`）から出す。複数のエンジンで学習と履歴を共有する
+- **英単語のローマ字入力:** かなモードのまま打った英単語を英字にする
+- **Windows 版（作業中）:** TSF のテキストサービスと設定ウィンドウを足した
+- **モデル:** zenz を読めるようにし、[比較](docs/model-bench.md) を足した
+
+fork した後に karukan に入った変換ペルソナ（`docs/persona.md`）は、まだ取り込んでいません。先頭の `images/demo.gif` は karukan の README にあるデモをそのまま使っています。
+
 ## ライセンス
 
 MIT OR Apache-2.0 のデュアルライセンスで提供しています。
