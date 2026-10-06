@@ -915,7 +915,8 @@ impl PartLayer {
             if let Some(first) = part_opener(key, ch) {
                 return self.start_part(engine, first);
             }
-            if self.keys.ascii.hit(key) {
+            // Mid-romaji (`sl` of `slack`) `l` is a letter, as in a part.
+            if self.keys.ascii.hit(key) && !(composing(engine) && ch.is_ascii_alphabetic()) {
                 return self.switch_to_ascii(engine);
             }
             if !self.skk_style && ch.is_ascii_lowercase() {
@@ -1017,7 +1018,9 @@ impl PartLayer {
             }
             return engine.process_key(&press_char(first));
         }
-        if self.keys.ascii.hit(key) {
+        // While a reading is being typed `l` is a letter of it, so English
+        // typed as romaji (`google`, `slack`) reaches the word it spells.
+        if self.keys.ascii.hit(key) && !(composing(engine) && ch.is_ascii_alphabetic()) {
             return self.switch_to_ascii(engine);
         }
         if self.keys.katakana.hit(key) && !matches!(engine.state(), InputState::Empty) {
@@ -2294,6 +2297,19 @@ mod tests {
         assert!(layer.process_key(&mut engine, &ctrl_j).consumed);
         assert_eq!(layer.mode(), PartMode::Plain);
         assert_eq!(feed(&mut layer, &mut engine, "a"), "あ");
+    }
+
+    #[test]
+    fn l_mid_reading_is_a_letter() {
+        let (layer, mut engine) = setup();
+        let mut layer = layer.with_skk_style(false);
+        feed(&mut layer, &mut engine, "goog");
+        feed(&mut layer, &mut engine, "le");
+        assert_eq!(layer.mode(), PartMode::Part);
+        assert_eq!(engine.reading(), "ごおgぇ");
+        // Once the part is closed, `l` goes to ASCII again.
+        feed(&mut layer, &mut engine, " l");
+        assert_eq!(layer.mode(), PartMode::Ascii);
     }
 
     #[test]
