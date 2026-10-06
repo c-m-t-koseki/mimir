@@ -15,6 +15,12 @@ class MimirInputController: IMKInputController {
     static let rubyPanel = RubyPanelController()
     /// Last input mode the engine reported; a change shows the badge.
     static var lastMode = "kana"
+    /// The last mode switch macOS made (`setValue`): the mode before it,
+    /// the app it was made in, and when.
+    static var lastSwitch: (from: String, app: String?, at: Date)?
+    /// A switch this soon before focus moves to another app is taken back
+    /// (see `activateServer`).
+    static let strayWindow: TimeInterval = 0.8
 
     /// Mirrors whether the engine currently shows a preedit (updated from
     /// engine actions). Used to decide when to refresh surrounding text.
@@ -232,6 +238,7 @@ class MimirInputController: IMKInputController {
         }
         let wantASCII = modeID == Self.romanModeID
         guard wantASCII != (Self.lastMode == "ascii") else { return }
+        Self.lastSwitch = (from: Self.lastMode, app: client.bundleIdentifier(), at: Date())
         let keysym = wantASCII ? KeyCodeMap.eisuKeysym : KeyCodeMap.superRKeysym
         if let result = engineClient.processKeySync(
             EngineKeyEvent(keysym: keysym, modifiers: KeyModifiers()))
@@ -272,6 +279,21 @@ class MimirInputController: IMKInputController {
     override func activateServer(_ sender: Any!) {
         super.activateServer(sender)
         guard let client = sender as? (any IMKTextInput) else { return }
+        // A switch macOS made just before focus moved to another app is a
+        // stray ⌘ tap on the way to ⌘-Tab (Karabiner turns a lone ⌘ tap into
+        // 英数 / かな, and a ⌘ pressed twice starts with one): take it back.
+        if let last = Self.lastSwitch, Date().timeIntervalSince(last.at) < Self.strayWindow,
+            last.app != client.bundleIdentifier(), last.from != Self.lastMode
+        {
+            let keysym = last.from == "ascii" ? KeyCodeMap.eisuKeysym : KeyCodeMap.superRKeysym
+            if let result = engineClient.processKeySync(
+                EngineKeyEvent(keysym: keysym, modifiers: KeyModifiers()))
+            {
+                apply(actions: result.actions, client: client)
+                Self.lastMode = result.mode ?? Self.lastMode
+            }
+        }
+        Self.lastSwitch = nil
         client.selectMode(Self.lastMode == "ascii" ? Self.romanModeID : Self.japaneseModeID)
     }
 
