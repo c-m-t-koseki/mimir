@@ -1,5 +1,7 @@
 //! Type definitions for the IME engine
 
+use std::collections::HashMap;
+
 use mimir_engine::{
     DateConfig, DateRewriter, Dictionary, KanaKanjiConverter, RewriterChain, RomajiConverter,
     SymbolStyle, WidthRules,
@@ -313,6 +315,9 @@ pub(in crate::core) struct Dictionaries {
     pub system: Option<Dictionary>,
     /// User dictionary (merged from user_dict_paths)
     pub user: Option<Dictionary>,
+    /// English words both dictionaries spell, keyed by the kana their
+    /// letters become when typed as romaji (`yahoo` → やほお → Yahoo)
+    pub english: HashMap<String, String>,
 }
 
 /// Conversion model dispatch strategy based on input length
