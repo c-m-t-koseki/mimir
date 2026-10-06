@@ -34,7 +34,7 @@ space = "half"                 # かな入力中のスペースキーが入力�
 
 [width]                        # かな入力中の出力幅（"half" / "full"）
 kana_symbol = "full"             # 。、「」・
-ascii_symbol = "full"          # ?! ,. (){}[] @ : ~ ほかの記号
+ascii_symbol = "half"          # ?! ,. (){}[] @ : ~ ほかの記号
 digit = "half"                 # 0-9
 
 [date]                         # 日付・時刻の変換（[日付・時刻](date.md) 参照）

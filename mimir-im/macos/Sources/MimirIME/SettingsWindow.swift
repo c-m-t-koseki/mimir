@@ -7,15 +7,15 @@ import SwiftUI
 /// through the engine (`get_config` / `set_config`). Changes restart the
 /// engine, which is what applies them (settings load at `init`).
 final class SettingsModel: ObservableObject {
-    @Published var partHint = "completion"
+    @Published var partHint = "none"
     @Published var candidateLayout = "vertical"
     @Published var candidateWindow = "always"
     @Published var readingDisplay = "tail"
     @Published var tailDelayMs = 250
-    @Published var tailDeleteDelayMs = 600
+    @Published var tailDeleteDelayMs = 400
     @Published var rewriteHoldMs = 250
-    @Published var commitGuardMs = 250
-    @Published var autoCommitMs = 1000
+    @Published var commitGuardMs = 0
+    @Published var autoCommitMs = 3000
     @Published var predictive = false
     @Published var skkStyle = false
     @Published var model = ""

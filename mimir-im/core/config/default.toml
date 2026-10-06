@@ -88,7 +88,7 @@ candidate_window = "always"
 # 漢字パート入力中、変換結果の下の小さな枠に出すもの（macOS）。
 # "completion" は打った読みで始まる過去の確定語（Tab で補完できる）、
 # "none" は何も出さない。
-part_hint = "completion"
+part_hint = "none"
 # 候補窓の並び（macOS）: "vertical"（縦に一列）/ "keyboard"（選択キーの位置どおりに
 # 2段: 上段 e r u i、下段 d f j k）
 candidate_layout = "vertical"
@@ -103,16 +103,16 @@ tail_chars = 1
 tail_delay_ms = 250
 # 削除（Backspace）のあとに手を止めてから変換するまで。漢字の読みを削った
 # ときだけ平仮名で見せ、漢字にかからない削除（規定で → 規定）は漢字のまま
-tail_delete_delay_ms = 600
+tail_delete_delay_ms = 400
 # 手を止めて末尾を変換して出したあと、この間に打ったキーでは、変換した
 # 末尾を平仮名に戻さない（天気 → てんき → 天気 のちらつきを防ぐ）
 rewrite_hold_ms = 250
 # 末尾を変換して出した直後の確定（Enter・Space など）は、変換して出す前に
 # 見えていたものを確定する。見ていたものと違うものが入らないように
-commit_guard_ms = 250
+commit_guard_ms = 0
 # 漢字パートに打ってから手を止めて、この時間がたつと確定する（0 で確定しない）。
 # 候補窓を開いているとき、区切っているとき、子音だけを打った途中では確定しない
-auto_commit_ms = 1000
+auto_commit_ms = 3000
 
 # どのキーがどの記号を入力するか。幅（半角・全角）は [width] が決める。
 [symbol]
@@ -140,8 +140,8 @@ space = "half"
 # 文を終える記号なので、こちらに含める
 kana_symbol = "full"
 # 対象: ,. (){}[] <>=+-/* "' :; ~ #%&@$^_|`\ とその全角形
-# 既定の全角で「（あ）」「あ＠b」になる
-ascii_symbol = "full"
+# 全角にすると「（あ）」「あ＠b」になる
+ascii_symbol = "half"
 # 対象: 0-9
 # 全角にすると「へや１２３」になる。既定が半角なのは、確定するたびに選んだ幅を
 # 覚える仕組みがなく、全角固定にすると取り消しがきかないから
