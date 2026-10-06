@@ -915,8 +915,7 @@ impl PartLayer {
             if let Some(first) = part_opener(key, ch) {
                 return self.start_part(engine, first);
             }
-            // Mid-romaji (`sl` of `slack`) `l` is a letter, as in a part.
-            if self.keys.ascii.hit(key) && !(composing(engine) && ch.is_ascii_alphabetic()) {
+            if self.keys.ascii.hit(key) && !l_is_a_letter(engine, ch) {
                 return self.switch_to_ascii(engine);
             }
             if !self.skk_style && ch.is_ascii_lowercase() {
@@ -1018,9 +1017,7 @@ impl PartLayer {
             }
             return engine.process_key(&press_char(first));
         }
-        // While a reading is being typed `l` is a letter of it, so English
-        // typed as romaji (`google`, `slack`) reaches the word it spells.
-        if self.keys.ascii.hit(key) && !(composing(engine) && ch.is_ascii_alphabetic()) {
+        if self.keys.ascii.hit(key) && !l_is_a_letter(engine, ch) {
             return self.switch_to_ascii(engine);
         }
         if self.keys.katakana.hit(key) && !matches!(engine.state(), InputState::Empty) {
@@ -1347,6 +1344,16 @@ fn typed_char(key: &KeyEvent) -> Option<char> {
 /// instead completes a pending `z` sequence: zl → →, z + Space → 　, ….
 /// What follows `z` in the z sequences (zh ← / zl → / z. … / z+Space …).
 const Z_SEQUENCE_KEYS: &str = "hjkl ,./-";
+
+/// Whether the ASCII key, a letter, is typed as a letter of the reading:
+/// right after a consonant (`gl` of `google`, `pl` of `apple`), which no
+/// romaji continues with `l`, so English typed as romaji reaches the word
+/// it spells. After a vowel or a lone `n` (こん → ん) it switches as ever;
+/// Shift+L types the letter there (`heLlo`, `Linux`).
+fn l_is_a_letter(engine: &InputMethodEngine, ch: char) -> bool {
+    let pending = engine.pending_romaji();
+    ch.is_ascii_alphabetic() && !pending.is_empty() && pending != "n"
+}
 
 fn z_sequence(engine: &InputMethodEngine, ch: char) -> bool {
     matches!(ch, 'l' | ' ' | ',' | '.') && engine.pending_romaji() == "z"
@@ -2303,13 +2310,21 @@ mod tests {
     fn l_mid_reading_is_a_letter() {
         let (layer, mut engine) = setup();
         let mut layer = layer.with_skk_style(false);
+        // Right after a consonant, `l` is a letter.
         feed(&mut layer, &mut engine, "goog");
         feed(&mut layer, &mut engine, "le");
         assert_eq!(layer.mode(), PartMode::Part);
         assert_eq!(engine.reading(), "ごおgぇ");
-        // Once the part is closed, `l` goes to ASCII again.
-        feed(&mut layer, &mut engine, " l");
+        // After kana it switches, closing the part.
+        feed(&mut layer, &mut engine, "l");
         assert_eq!(layer.mode(), PartMode::Ascii);
+
+        // Shift+L is the letter there.
+        let (layer, mut engine) = setup();
+        let mut layer = layer.with_skk_style(false);
+        feed(&mut layer, &mut engine, "heLlo");
+        assert_eq!(layer.mode(), PartMode::Part);
+        assert_eq!(engine.reading(), "へっぉ");
     }
 
     #[test]
