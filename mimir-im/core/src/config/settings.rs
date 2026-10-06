@@ -549,15 +549,15 @@ mod tests {
 
     #[test]
     fn test_default_symbol_and_width_settings() {
-        // Shipped defaults: the Japanese symbols, and kana input that comes
-        // out full-width apart from digits.
+        // Shipped defaults: the Japanese symbols, full-width kana symbols,
+        // and half-width ASCII symbols and digits.
         let settings = Settings::default();
         assert_eq!(settings.symbol.punctuation, PunctuationStyle::KutenTouten);
         assert_eq!(settings.symbol.bracket, BracketStyle::Corner);
         assert_eq!(settings.symbol.slash, SlashStyle::MiddleDot);
         assert_eq!(settings.symbol.space, SpaceStyle::Half);
         assert_eq!(settings.width.kana_symbol, Width::Full);
-        assert_eq!(settings.width.ascii_symbol, Width::Full);
+        assert_eq!(settings.width.ascii_symbol, Width::Half);
         assert_eq!(settings.width.digit, Width::Half);
     }
 

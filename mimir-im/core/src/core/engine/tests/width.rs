@@ -145,16 +145,15 @@ fn model_output_is_settled_too() {
 }
 
 #[test]
-fn the_shipped_default_makes_kana_input_full_width() {
-    // config/default.toml, end to end: typing in kana mode comes out
-    // full-width, and the same keys in alphabet mode come out as typed.
+fn the_shipped_default_keeps_ascii_symbols_half_width() {
+    // config/default.toml, end to end: the kana symbols come out
+    // full-width, the ASCII symbols and digits half-width, and the same keys
+    // in alphabet mode come out as typed.
     let mut engine = engine_on_shipped_defaults();
 
-    let result = type_keys(&mut engine, "(a)");
-    assert_eq!(shown_preedit(&result).as_deref(), Some("（あ）"));
+    let result = type_keys(&mut engine, "(a)?");
+    assert_eq!(shown_preedit(&result).as_deref(), Some("(あ)？"));
 
-    // Digits are the exception: nothing here remembers a width the user
-    // picked, so a full-width default would be one they cannot take back.
     engine.process_key(&press_key(Keysym::ESCAPE));
     let result = type_keys(&mut engine, "123");
     assert_eq!(shown_preedit(&result).as_deref(), Some("123"));
@@ -326,9 +325,9 @@ fn picking_a_width_variant_commits_that_width() {
 #[test]
 fn the_configured_form_and_both_widths_are_all_offered() {
     // Whatever the setting is, the user can reach the other forms from the
-    // list: `<>1234` shows as `＜＞1234` under the default (symbols full,
-    // digits half), with the all-full and all-half patterns alongside.
-    let mut engine = engine_on_shipped_defaults();
+    // list: `<>1234` shows as `＜＞1234` with symbols full and digits half,
+    // with the all-full and all-half patterns alongside.
+    let mut engine = engine_with_width(WidthRules::default());
     engine.converters.kanji = None;
 
     type_keys(&mut engine, "<>1234");
@@ -352,7 +351,7 @@ fn a_settled_symbol_keeps_its_width_when_alphabet_input_starts() {
     // Shift+A switches the rest of the word to direct input, where the
     // width rules do not apply. What was typed before it is already
     // settled, and stays that way.
-    let mut engine = engine_on_shipped_defaults();
+    let mut engine = engine_with_width(WidthRules::default());
     engine.converters.kanji = None;
 
     engine.process_key(&press('('));
