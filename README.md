@@ -7,10 +7,6 @@
   [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE-MIT)
 </div>
 
-<div align="center">
-  <img src="images/demo.gif" width="800" alt="mimir demo" />
-</div>
-
 ## プロジェクト構成
 
 IME本体(コアエンジン + 各プラットフォームのフロントエンド)は `mimir-im/` 配下にまとまっています。
@@ -75,7 +71,7 @@ fork したのは karukan の `3828dd2`（2026-09-19、「モデル定義をconf
 - **Windows 版（作業中）:** TSF のテキストサービスと設定ウィンドウを足した
 - **モデル:** zenz を読めるようにし、[比較](docs/model-bench.md) を足した
 
-fork した後に karukan に入った変換ペルソナ（`docs/persona.md`）は、まだ取り込んでいません。先頭の `images/demo.gif` は karukan の README にあるデモをそのまま使っています。
+fork した後に karukan に入った変換ペルソナ（`docs/persona.md`）は、まだ取り込んでいません。
 
 ## ライセンス
 
