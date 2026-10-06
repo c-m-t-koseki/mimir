@@ -182,9 +182,15 @@ impl InputMethodEngine {
         // A reading with romaji stranded between kana (ございmす) is a typo:
         // what one keystroke more or less makes of it, right after the first
         // candidate — offered, never put in place of what was typed.
+        // Stray letters that spell an English word (あっpぇ) are no typo.
+        let typo = spell_english(&reading, "", &self.dicts.english).is_none();
         let seen: HashSet<String> = candidates.iter().map(|c| c.text.clone()).collect();
-        let retyped: Vec<AnnotatedCandidate> = self
-            .retyped_candidates(&reading)
+        let retyped = if typo {
+            self.retyped_candidates(&reading)
+        } else {
+            Vec::new()
+        };
+        let retyped: Vec<AnnotatedCandidate> = retyped
             .into_iter()
             .filter(|c| !seen.contains(&c.text))
             .collect();
@@ -1083,44 +1089,70 @@ pub(super) fn retypings(reading: &str, romaji: &mimir_engine::RomajiConverter) -
     out
 }
 
+/// Longest reading an English word is looked up under (`kubernetes` →
+/// くべrねてs is 8).
+const MAX_ENGLISH_CHARS: usize = 16;
+
 /// `reading` with every English word typed as romaji spelled out
-/// (やほおちえぶくろ → Yahooちえぶくろ), taking the longest word at each
-/// position, left to right; `None` when there is none.
-///
-/// A word whose romaji is all kana counts only where `head` (what the
-/// conversion would show) left that kana as typed: うにいく is a word, but
-/// not inside ほっかいどうにいく, which the model made 北海道に行く. One that
-/// strands a letter (ぎてゅb) is English wherever it appears.
-// ponytail: a word typed right before a vowel merges with it as romaji
-// (`githubapi` → ぎてゅばぴ) and is not found; split on raw keystrokes if
-// that turns out to matter.
+/// (やほおちえぶくろ → Yahooちえぶくろ); `None` when there is none.
 pub(super) fn spell_english(
     reading: &str,
     head: &str,
     words: &HashMap<String, String>,
 ) -> Option<String> {
-    let longest = words.keys().map(|k| k.chars().count()).max()?;
     let chars: Vec<char> = reading.chars().collect();
+    let spans = english_spans(&chars, head, words);
+    if spans.is_empty() {
+        return None;
+    }
     let mut out = String::new();
-    let mut found = false;
+    let mut at = 0;
+    for (start, end, word) in spans {
+        out.extend(&chars[at..start]);
+        out.push_str(word);
+        at = end;
+    }
+    out.extend(&chars[at..]);
+    Some(out)
+}
+
+/// The English words typed as romaji in `chars`, as `(start, end, word)`,
+/// taking the longest word at each position, left to right.
+///
+/// A word whose romaji is all kana counts only where `head` (what the
+/// conversion would show) left that kana as typed: うにいく is a word, but
+/// not inside ほっかいどうにいく, which the model made 北海道に行く. One that
+/// strands a letter (ぎてゅb) is English wherever it appears; an empty
+/// `head` finds those alone.
+// ponytail: a word typed right before a vowel merges with it as romaji
+// (`githubapi` → ぎてゅばぴ) and is not found; split on raw keystrokes if
+// that turns out to matter.
+pub(super) fn english_spans<'a>(
+    chars: &[char],
+    head: &str,
+    words: &'a HashMap<String, String>,
+) -> Vec<(usize, usize, &'a str)> {
+    let mut spans = Vec::new();
+    if words.is_empty() {
+        return spans;
+    }
     let mut i = 0;
     while i < chars.len() {
-        let word = (1..=longest.min(chars.len() - i)).rev().find_map(|n| {
-            let key: String = chars[i..i + n].iter().collect();
-            let word = words.get(&key)?;
-            (key.chars().any(|c| c.is_ascii()) || head.contains(&key)).then_some((n, word))
-        });
+        let word = (1..=MAX_ENGLISH_CHARS.min(chars.len() - i))
+            .rev()
+            .find_map(|n| {
+                let key: String = chars[i..i + n].iter().collect();
+                let word = words.get(&key)?;
+                (key.chars().any(|c| c.is_ascii()) || head.contains(&key))
+                    .then_some((n, word.as_str()))
+            });
         match word {
             Some((n, w)) => {
-                out.push_str(w);
-                found = true;
+                spans.push((i, i + n, w));
                 i += n;
             }
-            None => {
-                out.push(chars[i]);
-                i += 1;
-            }
+            None => i += 1,
         }
     }
-    found.then_some(out)
+    spans
 }

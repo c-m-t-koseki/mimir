@@ -110,14 +110,41 @@ impl InputMethodEngine {
     /// Split `chars` with the engine's configured rules. The single place
     /// the settings and the manual breaks meet [`group_chunks`], so a new
     /// rule reaches every caller at once.
-    fn split_chunks(&self, chars: &[char]) -> Vec<String> {
+    pub(super) fn split_chunks(&self, chars: &[char]) -> Vec<String> {
         let limits = ChunkLimits {
             chars: self.chunk_chars(),
             symbols: self.config.chunk_symbols,
             digits: self.config.chunk_digits,
             alphabets: self.config.chunk_alphabets,
         };
-        group_chunks(chars, limits, &self.chunk_breaks)
+        let groups = group_chunks(chars, limits, &self.chunk_breaks);
+        // An English word that strands a letter (あっpぇ: apple) is a chunk
+        // of its own, which converts to the word: split at the letter, the
+        // kana either side would reach the model as Japanese.
+        let spans = super::conversion::english_spans(chars, "", &self.dicts.english);
+        if spans.is_empty() {
+            return groups;
+        }
+        let mut cuts: Vec<usize> = groups
+            .iter()
+            .scan(0, |end, g| {
+                *end += g.chars().count();
+                Some(*end)
+            })
+            .filter(|&cut| !spans.iter().any(|&(s, e, _)| s < cut && cut < e))
+            .collect();
+        cuts.extend(spans.iter().flat_map(|&(s, e, _)| [s, e]));
+        cuts.sort_unstable();
+        cuts.dedup();
+        let mut at = 0;
+        cuts.into_iter()
+            .filter(|&cut| cut > 0)
+            .map(|cut| {
+                let chunk = chars[at..cut].iter().collect();
+                at = cut;
+                chunk
+            })
+            .collect()
     }
 
     /// Top-1 conversion of `chars` on the same chunk grid live conversion
@@ -142,7 +169,14 @@ impl InputMethodEngine {
         base_ctx: &str,
         combined: &str,
     ) -> ComposingChunk {
-        let converted = if reading.chars().any(is_japanese) {
+        let english = self
+            .dicts
+            .english
+            .get(&reading)
+            .filter(|_| reading.chars().any(|c| c.is_ascii()));
+        let converted = if let Some(word) = english {
+            word.clone()
+        } else if reading.chars().any(is_japanese) {
             let lctx = self.lctx_for(base_ctx, combined);
             self.convert_chunk(&reading, &lctx)
         } else {
