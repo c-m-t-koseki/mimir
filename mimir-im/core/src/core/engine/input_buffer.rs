@@ -24,11 +24,12 @@
 //! 「きょK」.
 //!
 //! Every record edit ends with an evaluation. Typing evaluates the run
-//! ending at the caret; backspace/delete remove exactly one element and
-//! then evaluate the run the removal joined, so the result always equals
-//! typing the remaining keystrokes fresh: removing こ from `ytko`
-//! re-exposes the live elements (`o` → 「yと」, again 「よ」), and
-//! removing the `1` from `yt1t` evaluates `ytt` → 「yっt」.
+//! ending at the caret; backspace/delete remove one element and then
+//! evaluate the run the removal joined, so the result always equals
+//! typing the remaining keystrokes fresh: removing the `1` from `yt1t`
+//! evaluates `ytt` → 「yっt」. Backspace over a kana also removes the
+//! consonants stranded right before it (`apple` → 「あっpぇ」 → 「あっ」), so
+//! no lone consonant is left behind to read as a new keystroke.
 
 use mimir_engine::RomajiConverter;
 
@@ -119,12 +120,22 @@ impl InputBuffer {
     /// the removal joined, so the result matches typing the remaining
     /// keystrokes fresh (`yt1t` minus the `1` → 「yっt」). Returns false
     /// when the caret is at the start.
+    ///
+    /// Removing a kana takes the consonants stranded right before it too
+    /// (あっpぇ → あっ, not あっp): they were typed with it (`apple`'s `pl`
+    /// became pぇ), and left alone they would read as a new keystroke.
     pub fn backspace(&mut self, romaji: &RomajiConverter) -> bool {
         if self.cursor == 0 {
             return false;
         }
         self.cursor -= 1;
-        self.elements.remove(self.cursor);
+        let removed = self.elements.remove(self.cursor);
+        if !removed.is_romaji() && mimir_engine::contains_kana(&removed.ch().to_string()) {
+            while self.cursor > 0 && self.elements[self.cursor - 1].is_romaji() {
+                self.cursor -= 1;
+                self.elements.remove(self.cursor);
+            }
+        }
         self.evaluate_joined_run(romaji);
         true
     }
