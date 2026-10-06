@@ -111,11 +111,13 @@ class MimirInputController: IMKInputController {
             sendSurroundingText(client: client)
         }
 
+        let started = Date()
         guard let result = engineClient.processKeySync(key) else {
             // Engine busy or dead: let the key pass through rather than
             // freezing input.
             return false
         }
+        let engineDone = Date()
         Self.candidateWindow.showsKeys = result.selectKeys ?? true
         if let chars = result.selectChars { Self.candidateWindow.keys = Array(chars) }
         Self.candidateWindow.layout = result.candidateLayout ?? "vertical"
@@ -127,6 +129,11 @@ class MimirInputController: IMKInputController {
         showHint(result.hint, client: client)
         if !result.consumed {
             typed.passedThrough(key)
+        }
+        let total = Date().timeIntervalSince(started) * 1000
+        if total > 40 {
+            let roundTrip = engineDone.timeIntervalSince(started) * 1000
+            NSLog("MimirIME: DEBUG slow key \(Int(total))ms: engine round trip \(Int(roundTrip))ms (process_key \(result.processKeyMs ?? 0)ms, model \(result.conversionMs ?? 0)ms), app side \(Int(total - roundTrip))ms, preedit \(markedText.count) chars, in \(client.bundleIdentifier() ?? "?")")
         }
         return result.consumed
     }
