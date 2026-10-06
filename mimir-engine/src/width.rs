@@ -51,9 +51,9 @@ enum Group {
 
 /// The pairs arithmetic cannot produce. Every other character in
 /// [`Group::AsciiSymbol`] is its ASCII original plus [`FULLWIDTH_OFFSET`],
-/// which [`forms`] computes: these five kana symbols have unrelated code
-/// points, and `~` types the wave dash `〜` rather than the full-width
-/// tilde the offset would give (`～` still folds to `~` through it).
+/// which [`forms`] computes: these kana symbols have unrelated code points,
+/// and the tilde's full form is the wave dash `〜` rather than the
+/// full-width tilde `～` the offset would give.
 #[rustfmt::skip]
 const PAIRS: &[(Group, char, char)] = &[
     (Group::KanaSymbol,  '｡', '。'),
@@ -63,7 +63,6 @@ const PAIRS: &[(Group, char, char)] = &[
     (Group::KanaSymbol,  '･', '・'),
     (Group::KanaSymbol,  '?', '？'),
     (Group::KanaSymbol,  '!', '！'),
-    (Group::AsciiSymbol, '~', '〜'),
 ];
 
 /// Full-width forms sit this far above their ASCII originals: `(` U+0028 →
@@ -87,6 +86,14 @@ fn forms(c: char) -> Option<(Group, char, char)> {
     }
     if c.is_ascii_alphabetic() || matches!(c, 'Ａ'..='Ｚ' | 'ａ'..='ｚ') {
         return ascii_pair(Group::Alphabet);
+    }
+    // The `~` key types ～, which settles at either width; the wave dash 〜
+    // itself is a Japanese symbol (`z-` types it) and keeps its form, so
+    // 「記号は半角」 cannot turn 10〜20 into 10~20.
+    match c {
+        '~' | '～' => return Some((Group::AsciiSymbol, '~', '〜')),
+        '〜' => return None,
+        _ => {}
     }
     if let Some((group, half, full)) = PAIRS
         .iter()
@@ -230,10 +237,11 @@ mod tests {
         assert_eq!(full.apply_str("@#%"), "＠＃％");
         assert_eq!(full.apply_str("123"), "１２３");
 
-        // `~` types 〜 (U+301C); the full-width tilde ～ (U+FF5E) other
-        // sources produce belongs to the same group and folds with it.
-        assert_eq!(full.apply_str("~"), "〜");
-        assert_eq!(half.apply_str("〜～"), "~~");
+        // The tilde settles at 〜 (U+301C) or ~; the wave dash itself is
+        // not a width form and stays (`z-` types it).
+        assert_eq!(full.apply_str("~～"), "〜〜");
+        assert_eq!(half.apply_str("~～"), "~~");
+        assert_eq!(half.apply_str("〜"), "〜");
     }
 
     #[test]

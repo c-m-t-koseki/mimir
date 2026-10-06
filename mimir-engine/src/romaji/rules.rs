@@ -349,7 +349,9 @@ pub fn build_rules(style: SymbolStyle) -> TrieNode {
     trie.insert("/", style.slash.slash());
     trie.insert("?", "？");
     trie.insert("!", "！");
-    trie.insert("~", "〜");
+    // ～, not 〜: the tilde key settles at the configured width, while the
+    // wave dash `z-` types is kept as is.
+    trie.insert("~", "～");
 
     // Brackets
     trie.insert("[", style.bracket.open());
@@ -571,7 +573,7 @@ mod tests {
         assert_eq!(trie.search_longest(",").output.unwrap(), "、");
         assert_eq!(trie.search_longest(".").output.unwrap(), "。");
         assert_eq!(trie.search_longest("-").output.unwrap(), "ー");
-        assert_eq!(trie.search_longest("~").output.unwrap(), "〜");
+        assert_eq!(trie.search_longest("~").output.unwrap(), "～");
     }
 
     #[test]
