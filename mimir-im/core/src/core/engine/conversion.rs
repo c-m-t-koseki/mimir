@@ -197,6 +197,24 @@ impl InputMethodEngine {
         let at = candidates.len().min(1);
         candidates.splice(at..at, retyped);
 
+        // A single `n` read the other way (ほにゃく → ほんやく): next to the
+        // head, recorded under the typed reading like the English spelling.
+        for retyping in self.n_retyped(&reading) {
+            let text = self
+                .model_candidates(&retyping.reading, 1)
+                .into_iter()
+                .next()
+                .unwrap_or_else(|| retyping.reading.clone());
+            if !candidates.iter().any(|c| c.text == text) {
+                let at = candidates.len().min(1);
+                candidates.insert(
+                    at,
+                    AnnotatedCandidate::new(text, CandidateSource::Model)
+                        .with_description(Some(format!("n 補正: {}", retyping.reading))),
+                );
+            }
+        }
+
         // English typed as romaji (yahoo → やほお): the same reading with
         // the word spelled out, next to the head. Recorded under the typed
         // reading, so once picked it heads the list itself.
@@ -858,6 +876,33 @@ impl InputMethodEngine {
         }
     }
 
+    /// [`n_retypings`] of `reading`, looked up in both dictionaries.
+    pub(super) fn n_retyped(&self, reading: &str) -> Vec<NRetyping> {
+        let dicts = [&self.dicts.user, &self.dicts.system];
+        n_retypings(reading, |word| {
+            let entries: Vec<_> = dicts
+                .iter()
+                .filter_map(|d| d.as_ref()?.exact_match_search(word))
+                .collect();
+            if entries.is_empty() {
+                return None;
+            }
+            let kanji = |surface: &str| {
+                surface
+                    .chars()
+                    .any(|c| !c.is_ascii() && !mimir_engine::contains_kana(&c.to_string()))
+            };
+            Some(
+                entries
+                    .iter()
+                    .flat_map(|e| e.candidates)
+                    .filter(|c| kanji(&c.surface))
+                    .map(|c| c.score)
+                    .fold(f32::INFINITY, f32::min),
+            )
+        })
+    }
+
     /// [`retypings`] of `reading`, each converted as the model would (or
     /// as kana without it), marked with the reading it stands for.
     fn retyped_candidates(&mut self, reading: &str) -> Vec<AnnotatedCandidate> {
@@ -1088,6 +1133,114 @@ pub(super) fn retypings(reading: &str, romaji: &mimir_engine::RomajiConverter) -
     out.dedup();
     out
 }
+
+/// Readings a single `n` may have meant where it took the next key along
+/// (ほにゃく for `honyaku`): ny+vowel read ん + y (ほんやく), n+vowel read
+/// ん + vowel (げにん → げんいん), or the `nn` of ん + な行 typed once
+/// (はにち → はんにち). Each is kept only where it makes a long, common
+/// dictionary word across the ん and the reading as typed makes none across
+/// that spot, best first, at most [`MAX_N_RETYPINGS`].
+///
+/// `word_cost` is a reading's lowest cost written in kanji: `None` for no
+/// word, infinite for a word written in kana alone.
+pub(super) fn n_retypings(
+    reading: &str,
+    word_cost: impl Fn(&str) -> Option<f32>,
+) -> Vec<NRetyping> {
+    let chars: Vec<char> = reading.chars().collect();
+    // Longest word in `chars` costing at most `max` that runs from at or
+    // before `from` to at or after `to` (inclusive char indices).
+    let covering = |chars: &[char], from: usize, to: usize, max: f32| {
+        let mut best = 0;
+        for start in from.saturating_sub(MAX_WORD_CHARS - 1)..=from {
+            for end in to + 1..=chars.len().min(start + MAX_WORD_CHARS) {
+                let word: String = chars[start..end].iter().collect();
+                if end - start > best && word_cost(&word).is_some_and(|c| c <= max) {
+                    best = end - start;
+                }
+            }
+        }
+        best
+    };
+    let mut found: Vec<(usize, NRetyping)> = Vec::new();
+    for i in 1..chars.len() {
+        let prev = chars[i - 1];
+        if !matches!(prev, 'ぁ'..='ゖ') || matches!(prev, 'ん' | 'っ') {
+            continue;
+        }
+        let small_y = chars.get(i + 1).and_then(|&c| match c {
+            'ゃ' => Some('や'),
+            'ゅ' => Some('ゆ'),
+            'ょ' => Some('よ'),
+            _ => None,
+        });
+        let vowel = match chars[i] {
+            'な' => 'あ',
+            'に' => 'い',
+            'ぬ' => 'う',
+            'ね' => 'え',
+            'の' => 'お',
+            _ => continue,
+        };
+        // (replacement for chars[i..i + taken], ny or not)
+        let mut options = vec![(vec!['ん', chars[i]], 1, false)];
+        match small_y {
+            Some(y) if chars[i] == 'に' => options.push((vec!['ん', y], 2, true)),
+            _ => options.push((vec!['ん', vowel], 1, false)),
+        }
+        // Words written in kana alone are left out: the dictionary carries
+        // junk like きにょう that would hide きんよう.
+        let typed = covering(&chars, i - 1, i, f32::MAX);
+        for (with, taken, ny) in options {
+            let mut variant = chars[..i].to_vec();
+            variant.extend(&with);
+            variant.extend(&chars[i + taken..]);
+            // にゃ/にゅ/にょ are rare enough to take a shorter word (今夜).
+            let min = if ny {
+                MIN_N_WORD_CHARS - 1
+            } else {
+                MIN_N_WORD_CHARS
+            };
+            let word = covering(&variant, i - 1, i + 1, MAX_N_WORD_COST);
+            if word >= min && typed < min - 1 {
+                let gain = word - typed;
+                let reading = variant.into_iter().collect();
+                found.push((gain, NRetyping { reading, at: i, ny }));
+            }
+        }
+    }
+    found.sort_by_key(|a| std::cmp::Reverse(a.0));
+    found.truncate(MAX_N_RETYPINGS);
+    found.into_iter().map(|(_, r)| r).collect()
+}
+
+/// One reading [`n_retypings`] offers.
+#[derive(Debug, PartialEq)]
+pub(super) struct NRetyping {
+    pub reading: String,
+    /// Char index of the kana the single `n` made (に of ほにゃく)
+    pub at: usize,
+    /// ny + vowel read as ん + y: a にゃ/にゅ/にょ few words have, so one the
+    /// conversion left as kana is taken as ん + y in live conversion too.
+    pub ny: bool,
+}
+
+/// At most this many [`n_retypings`] are offered, each costing an inference.
+const MAX_N_RETYPINGS: usize = 2;
+
+/// Shortest word a [`n_retypings`] reading must make across the ん (ほんやく),
+/// where the reading as typed makes at most one char less than that minus
+/// one (ほに): short words are everywhere, and これはしない must not turn
+/// into 親愛 for its しな.
+const MIN_N_WORD_CHARS: usize = 4;
+
+/// Costliest word a [`n_retypings`] reading may make: 翻訳 / 原因 / 半日
+/// are 6250–6520, while rarities a particle runs into (ねこが + ない →
+/// 眼内 7138, なにも + ない → 門内 7404) are not.
+const MAX_N_WORD_COST: f32 = 6600.0;
+
+/// Longest dictionary reading [`n_retypings`] looks for across a spot.
+const MAX_WORD_CHARS: usize = 8;
 
 /// Longest reading an English word is looked up under (`kubernetes` →
 /// くべrねてs is 8).
