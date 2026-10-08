@@ -378,3 +378,32 @@ fn english_stranding_a_letter_converts_live_as_its_own_chunk() {
     assert_eq!(engine.split_chunks(&chars), ["あっpぇ", "に"]);
     assert_eq!(engine.convert_on_chunk_grid(&chars, ""), "Appleに");
 }
+
+#[test]
+fn a_single_n_is_read_again_where_it_makes_a_common_word() {
+    use super::super::conversion::n_retypings;
+    let costs = [
+        ("ほんやく", 6508.0),
+        ("はんにち", 6250.0),
+        ("こんや", 5405.0),
+        ("がんない", 7138.0), // 眼内: too rare to read ねこがない as
+        ("しんあい", 6518.0),
+        ("しない", 7000.0),
+        ("きにょう", f32::INFINITY), // kana-only junk hides nothing
+        ("きんよう", 5826.0),
+    ];
+    let cost = |w: &str| costs.iter().find(|(r, _)| *r == w).map(|(_, c)| *c);
+    let readings = |r: &str| -> Vec<(String, bool)> {
+        n_retypings(r, cost)
+            .into_iter()
+            .map(|n| (n.reading, n.ny))
+            .collect()
+    };
+    assert_eq!(readings("ほにゃく"), [("ほんやく".into(), true)]);
+    assert_eq!(readings("はにちで"), [("はんにちで".into(), false)]);
+    assert_eq!(readings("こにゃ"), [("こんや".into(), true)]);
+    assert_eq!(readings("きにょうび"), [("きんようび".into(), true)]);
+    // Rare words, and spots the reading as typed already makes a word of.
+    assert!(readings("ねこがない").is_empty());
+    assert!(readings("これはしない").is_empty());
+}

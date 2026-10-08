@@ -178,7 +178,18 @@ impl InputMethodEngine {
             word.clone()
         } else if reading.chars().any(is_japanese) {
             let lctx = self.lctx_for(base_ctx, combined);
-            self.convert_chunk(&reading, &lctx)
+            let converted = self.convert_chunk(&reading, &lctx);
+            // A にゃ/にゅ/にょ the model left as kana was ん + y (ほにゃく →
+            // 翻訳): convert the chunk as that, keeping its typed reading.
+            let kept = mimir_engine::katakana_to_hiragana(&converted);
+            let retyping = self.n_retyped(&reading).into_iter().find(|r| {
+                let typed: String = reading.chars().skip(r.at).take(2).collect();
+                r.ny && kept.contains(&typed)
+            });
+            match retyping {
+                Some(r) => self.convert_chunk(&r.reading, &lctx),
+                None => converted,
+            }
         } else {
             reading.clone()
         };
