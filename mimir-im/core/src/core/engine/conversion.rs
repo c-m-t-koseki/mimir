@@ -1188,6 +1188,15 @@ pub(super) fn n_retypings(
             Some(y) if chars[i] == 'に' => options.push((vec!['ん', y], 2, true)),
             _ => options.push((vec!['ん', vowel], 1, false)),
         }
+        // A particle right after a word (駅 + に of えきにつく) is just that,
+        // however common the word the ん would make (均一).
+        let after_word = (i.saturating_sub(MAX_WORD_CHARS)..i - 1).any(|start| {
+            let word: String = chars[start..i].iter().collect();
+            word_cost(&word).is_some_and(|c| c < f32::MAX)
+        });
+        if after_word && matches!(chars[i], 'な' | 'に' | 'ね' | 'の') {
+            continue;
+        }
         // Words written in kana alone are left out: the dictionary carries
         // junk like きにょう that would hide きんよう.
         let typed = covering(&chars, i - 1, i, f32::MAX);
