@@ -203,6 +203,7 @@ cancel = "C-g Escape"   # 候補窓を閉じる / パートを取り消す
 register = "C-r"        # 単語登録
 complete = "C-i Tab"    # 以前入力した語で補完
 katakana = "q"          # カタカナで確定
+hiragana = "C-j"        # ひらがなで確定（パートの外では kana が働く）
 close = "Space"         # パートを閉じて確定（区切ったときは左側）
 commit = "Return"       # すべて確定
 left = "C-b Left"       # 変換する範囲を1文字縮める

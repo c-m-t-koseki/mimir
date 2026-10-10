@@ -618,6 +618,16 @@ impl PartLayer {
                 return merge(EngineResult::consumed(), result);
             }
 
+            // Ctrl+J inside a part: commit the reading as typed, as SKK's
+            // C-j does in ▽ (and macOS's Ctrl+J, ひらがな). Ahead of `kana`,
+            // which shares the key and keeps it everywhere else.
+            if self.keys.hiragana.hit(key)
+                && self.mode == PartMode::Part
+                && !self.abbrev
+                && !matches!(engine.state(), InputState::Empty)
+            {
+                return self.commit_kana(engine, false);
+            }
             // Ctrl+J / かな: back to kana from anywhere, closing an open part.
             if self.keys.kana.hit(key) || key.keysym.is_mode_toggle_key() {
                 let result = self.close(engine);
@@ -991,7 +1001,7 @@ impl PartLayer {
                 return self.switch_to_ascii(engine);
             }
             if self.keys.katakana.hit(key) && !matches!(engine.state(), InputState::Empty) {
-                return self.commit_katakana(engine);
+                return self.commit_kana(engine, true);
             }
             return match key.modifiers.control_key {
                 true => engine.process_key(key),
@@ -1021,7 +1031,7 @@ impl PartLayer {
             return self.switch_to_ascii(engine);
         }
         if self.keys.katakana.hit(key) && !matches!(engine.state(), InputState::Empty) {
-            return self.commit_katakana(engine);
+            return self.commit_kana(engine, true);
         }
         if matches!(ch, ',' | '.' | '?' | '!') {
             let result = self.close(engine);
@@ -1136,7 +1146,7 @@ impl PartLayer {
             return self.move_split(engine, to);
         }
         if self.keys.katakana.hit(key) {
-            return self.commit_katakana(engine);
+            return self.commit_kana(engine, true);
         }
         let Some(ch) = typed_char(key) else {
             return engine.process_key(key);
@@ -1256,12 +1266,15 @@ impl PartLayer {
         out
     }
 
-    /// `q`: commit the part's reading in katakana, and learn it so the live
-    /// conversion offers it next time (てすと → テスト).
-    fn commit_katakana(&mut self, engine: &mut InputMethodEngine) -> EngineResult {
+    /// `q` / Ctrl+J: commit the part's reading in katakana or as typed, and
+    /// learn it so the live conversion offers it next time (てすと → テスト).
+    fn commit_kana(&mut self, engine: &mut InputMethodEngine, katakana: bool) -> EngineResult {
         engine.settle_pending();
         let reading = engine.take_reading();
-        let text = mimir_engine::hiragana_to_katakana(&reading);
+        let text = match katakana {
+            true => mimir_engine::hiragana_to_katakana(&reading),
+            false => reading.clone(),
+        };
         engine.learn(&reading, &text);
         self.recent = Some((reading, text.clone()));
         let result = EngineResult::consumed()
@@ -1769,6 +1782,37 @@ mod tests {
         feed(&mut layer, &mut engine, "Pan");
         layer.process_key(&mut engine, &ctrl('n'));
         assert_eq!(feed(&mut layer, &mut engine, "q"), "パン");
+    }
+
+    #[test]
+    fn ctrl_j_commits_the_part_in_hiragana() {
+        let (mut layer, mut engine) = setup();
+        let committed = |result: EngineResult| -> String {
+            result
+                .actions
+                .into_iter()
+                .filter_map(|a| match a {
+                    EngineAction::Commit(text) => Some(text),
+                    _ => None,
+                })
+                .collect()
+        };
+        assert_eq!(feed(&mut layer, &mut engine, "noKaita"), "の");
+        let result = layer.process_key(&mut engine, &ctrl('j'));
+        assert_eq!(committed(result), "かいた");
+        assert_eq!(layer.mode(), PartMode::Plain);
+        // From the candidate window too.
+        feed(&mut layer, &mut engine, "Pan");
+        layer.process_key(&mut engine, &ctrl('n'));
+        assert_eq!(
+            committed(layer.process_key(&mut engine, &ctrl('j'))),
+            "ぱん"
+        );
+        // Outside a part it still comes back to kana.
+        feed(&mut layer, &mut engine, "l");
+        assert_eq!(layer.mode(), PartMode::Ascii);
+        layer.process_key(&mut engine, &ctrl('j'));
+        assert_eq!(layer.mode(), PartMode::Plain);
     }
 
     #[test]

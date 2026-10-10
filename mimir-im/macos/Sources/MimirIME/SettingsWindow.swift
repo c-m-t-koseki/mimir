@@ -469,7 +469,7 @@ struct KeysTab: View {
     private static let actions: [(String, String)] = [
         ("convert", "候補窓を開く"), ("next", "次の候補"), ("prev", "前の候補"),
         ("close", "パートを閉じて確定"), ("commit", "すべて確定"), ("cancel", "取り消す"),
-        ("katakana", "カタカナで確定"), ("complete", "以前の入力で補完"),
+        ("katakana", "カタカナで確定"), ("hiragana", "ひらがなで確定"), ("complete", "以前の入力で補完"),
         ("left", "変換範囲を縮める"), ("right", "変換範囲を伸ばす"), ("home", "先頭の1文字だけ"),
         ("end", "全体"), ("end_commit", "末尾ですべて確定"), ("register", "単語登録"), ("discard", "入力を捨てる"),
         ("kana", "かな入力へ"), ("ascii", "英数（直接入力）へ"), ("abbrev", "英字のまま変換"),
