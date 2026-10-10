@@ -32,6 +32,8 @@ pub struct KeysSettings {
     pub complete: String,
     /// Commit the reading in katakana
     pub katakana: String,
+    /// Commit the reading in hiragana, as typed
+    pub hiragana: String,
     /// Close the part (its left side when split), typing goes on
     pub close: String,
     /// Commit everything
@@ -166,6 +168,7 @@ pub struct Keymap {
     pub register: Keys,
     pub complete: Keys,
     pub katakana: Keys,
+    pub hiragana: Keys,
     pub close: Keys,
     pub commit: Keys,
     pub left: Keys,
@@ -204,6 +207,7 @@ impl Keymap {
             register: Keys::parse(&s.register)?,
             complete: Keys::parse(&s.complete)?,
             katakana: Keys::parse(&s.katakana)?,
+            hiragana: Keys::parse(&s.hiragana)?,
             close: Keys::parse(&s.close)?,
             commit: Keys::parse(&s.commit)?,
             left: Keys::parse(&s.left)?,
@@ -229,6 +233,7 @@ impl Keymap {
             &self.register,
             &self.complete,
             &self.katakana,
+            &self.hiragana,
             &self.close,
             &self.commit,
             &self.left,
