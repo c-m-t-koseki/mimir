@@ -391,6 +391,8 @@ fn a_single_n_is_read_again_where_it_makes_a_common_word() {
         ("しない", 7000.0),
         ("きにょう", f32::INFINITY), // kana-only junk hides nothing
         ("きんよう", 5826.0),
+        ("えき", 3000.0),
+        ("きんいつ", 2605.0), // 均一: common, but えき + に is 駅に
     ];
     let cost = |w: &str| costs.iter().find(|(r, _)| *r == w).map(|(_, c)| *c);
     let readings = |r: &str| -> Vec<(String, bool)> {
@@ -406,4 +408,6 @@ fn a_single_n_is_read_again_where_it_makes_a_common_word() {
     // Rare words, and spots the reading as typed already makes a word of.
     assert!(readings("ねこがない").is_empty());
     assert!(readings("これはしない").is_empty());
+    // A particle right after a word stays a particle.
+    assert!(readings("えきにつく").is_empty());
 }
