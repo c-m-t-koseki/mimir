@@ -240,20 +240,34 @@ impl LearningCache {
     /// the next conversion. Returns whether anything was removed; persisted
     /// at the next `save`.
     pub fn remove_suggestion(&mut self, reading: &str, surface: &str) -> bool {
+        self.remove_matching(reading, |s| s == surface)
+    }
+
+    /// Remove every entry a completion `surface` for `reading` was cut
+    /// from: readings extending `reading` whose surface extends `surface`.
+    /// A completion is a prefix of its entry, so the exact match of
+    /// [`Self::remove_suggestion`] never finds it.
+    pub fn remove_completion(&mut self, reading: &str, surface: &str) -> bool {
+        self.remove_matching(reading, |s| s.starts_with(surface))
+    }
+
+    fn remove_matching(&mut self, reading: &str, hit: impl Fn(&str) -> bool) -> bool {
         let mut removed = Vec::new();
         self.entries.retain(|r, entries| {
             if !r.starts_with(reading) {
                 return true;
             }
-            let before = entries.len();
-            entries.retain(|e| e.surface != surface);
-            if entries.len() != before {
-                removed.push(r.clone());
-            }
+            entries.retain(|e| {
+                let hit = hit(&e.surface);
+                if hit {
+                    removed.push((r.clone(), e.surface.clone()));
+                }
+                !hit
+            });
             !entries.is_empty()
         });
-        for r in &removed {
-            self.note_removed(r, surface);
+        for (r, s) in &removed {
+            self.note_removed(r, s);
         }
         self.dirty |= !removed.is_empty();
         !removed.is_empty()

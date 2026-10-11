@@ -251,6 +251,37 @@ fn ctrl_backspace_deletes_learning_entry_like_ctrl_delete() {
 }
 
 #[test]
+fn ctrl_backspace_deletes_history_completion() {
+    // A completion is cut from a history entry, so it shares the Learning
+    // source but lives in `history`; deleting it must clear the entry there.
+    let mut engine = engine_with_learned("ほげ", "保毛");
+    let mut history = LearningCache::new(LearningConfig::default());
+    history.record("どんあ", "貪(どん)あ");
+    engine.history = Some(history);
+
+    engine.process_key(&press('d'));
+    engine.process_key(&press('o'));
+    engine.process_key(&press('n'));
+    engine.process_key(&press('n'));
+    engine.process_key(&press_key(Keysym::SPACE));
+    let at = engine
+        .state()
+        .candidates()
+        .unwrap()
+        .candidates()
+        .iter()
+        .position(|c| c.text.starts_with("貪("))
+        .expect("history completion offered");
+    for _ in 0..at {
+        engine.process_key(&press_key(Keysym::TAB));
+    }
+
+    let result = engine.process_key(&press_ctrl(Keysym::BACKSPACE));
+    assert!(result.consumed);
+    assert!(engine.history.as_ref().unwrap().entries().is_empty());
+}
+
+#[test]
 fn ctrl_backspace_does_nothing_for_non_learning_candidate() {
     // When the selection isn't a learning candidate, Ctrl+Backspace (like
     // Ctrl+Delete) is consumed so it can't leak to the app mid-conversion,
