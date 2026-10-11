@@ -971,6 +971,20 @@ impl InputMethodEngine {
             .learning
             .as_mut()
             .is_some_and(|cache| cache.remove_suggestion(&reading, &surface));
+        // A history completion shares the Learning source but comes from
+        // `history`, cut short of its entry; only a row actually offered
+        // as one is cleared there, so deleting a plain learned 今日 leaves
+        // 今日はいい天気 alone.
+        let completed = self
+            .history_completions(&reading)
+            .into_iter()
+            .any(|c| c.text == surface);
+        let removed = removed
+            | (completed
+                && self
+                    .history
+                    .as_mut()
+                    .is_some_and(|cache| cache.remove_completion(&reading, &surface)));
         if !removed {
             return EngineResult::consumed();
         }
