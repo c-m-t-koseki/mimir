@@ -97,3 +97,12 @@ fn test_empty_live_text_not_added_to_candidates() {
         );
     }
 }
+
+#[test]
+fn model_candidates_drop_parens_the_reading_lacks() {
+    // The model annotates the way its training text does (表示(イメージ));
+    // a paren nobody typed is never a spelling of the reading.
+    let mut engine = InputMethodEngine::new();
+    seed_model_cache(&mut engine, "ヒョウジ", "", &["表示(イメージ)", "表示"]);
+    assert_eq!(engine.model_candidates("ひょうじ", 1), vec!["表示"]);
+}
