@@ -298,8 +298,14 @@ impl InputMethodEngine {
         // the callers. A beam that returns the reading unchanged is a real
         // answer — words that stay in kana (きゃりーぱみゅぱみゅ) convert to
         // themselves — so it rides like any other candidate.
+        // A paren the reading doesn't have is the model annotating its own
+        // answer the way its training text does — 表示(イメージ), 貪(どん)
+        // — never a spelling of what was typed.
+        const PARENS: [char; 4] = ['(', ')', '（', '）'];
+        let typed_parens = span.contains(PARENS);
         self.run_kana_kanji_conversion(&span, &lctx, num_candidates)
             .into_iter()
+            .filter(|tail| typed_parens || !tail.contains(PARENS))
             .map(|tail| format!("{prefix}{tail}"))
             .collect()
     }
