@@ -1914,6 +1914,34 @@ mod tests {
         assert_eq!(layer.mode(), PartMode::Plain);
     }
 
+    #[test]
+    fn a_reading_cut_at_the_caret_predicts_nothing() {
+        // The caret marks where the reading ends; the history's 今日は寒い
+        // would complete past it.
+        let (mut layer, mut engine) = history_setup();
+        feed(&mut layer, &mut engine, "Kyouhaiitenki");
+        for _ in 0..4 {
+            layer.process_key(&mut engine, &ctrl('b'));
+        }
+        layer.process_key(&mut engine, &ctrl('b'));
+        assert_eq!(engine.reading(), "きょうは");
+        // The conversion's window, after the reopened composition's.
+        let texts: Vec<String> = engine
+            .state()
+            .candidates()
+            .unwrap()
+            .candidates()
+            .iter()
+            .map(|c| c.text.clone())
+            .collect();
+        assert!(
+            !texts
+                .iter()
+                .any(|t| t.starts_with("今日はいい") || t.starts_with("今日は寒")),
+            "{texts:?}"
+        );
+    }
+
     /// A layer showing the typed tail in kana, with `timing`, and an engine
     /// that converts てんき(が) to 天気(が) after 昨日は without a model.
     /// No window while typing: with one, the preedit shows its head.

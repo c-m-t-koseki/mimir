@@ -144,6 +144,10 @@ pub struct InputMethodEngine {
     /// The Conversion state lists history completions only (Tab / Ctrl+I,
     /// or a chain's window).
     history_window: bool,
+    /// The composition is a reading the part layer cut ([`Self::reopen`]):
+    /// its end is where the user put the caret, not where typing stopped,
+    /// so nothing is predicted past it.
+    bounded: bool,
     /// A part being committed in pieces (the part layer cut it at the
     /// caret): its commits held back from the history and the learning
     /// cache until [`Self::record_pieces`] records them as one.
@@ -215,6 +219,7 @@ impl InputMethodEngine {
             chain: None,
             chaining: false,
             history_window: false,
+            bounded: false,
             pieces: None,
             config: EngineConfig::default(),
             metrics: ConversionMetrics::default(),
@@ -385,7 +390,7 @@ impl InputMethodEngine {
     /// shallow first (`word_prefixes`). Taking one goes on from there a
     /// word at a time (`continue_chain`).
     pub(super) fn history_completions(&self, base: &str) -> Vec<Candidate> {
-        let Some(history) = &self.history else {
+        let Some(history) = self.history.as_ref().filter(|_| !self.bounded) else {
             return Vec::new();
         };
         let typed = base.chars().count();
@@ -538,6 +543,7 @@ impl InputMethodEngine {
     /// `candidate_window = "conversion"` keeps the window closed.
     pub fn reopen(&mut self, reading: &str) -> EngineResult {
         self.end_composition();
+        self.bounded = true;
         reading
             .chars()
             .for_each(|ch| self.input_buf.push_direct(ch));
@@ -681,6 +687,7 @@ impl InputMethodEngine {
         self.previewed = None;
         self.offered_completions.clear();
         self.history_window = false;
+        self.bounded = false;
     }
 
     /// What the conversion window lists, by name, when it is one source's:
