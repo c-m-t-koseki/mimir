@@ -346,6 +346,7 @@ impl InputMethodEngine {
         // the right key.
         let constraint = self.tail_constraint(pending);
         if self.config.predictive
+            && !self.bounded
             && reading.chars().count() >= min_prefix_chars
             && !matches!(constraint, TailConstraint::Dead)
         {
