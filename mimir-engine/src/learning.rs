@@ -30,6 +30,9 @@ const CONTEXT_CHARS: usize = 8;
 /// Score per char of left context shared with a recorded one. One shared
 /// char already outweighs any recency/frequency gap (at most ~10 + ln f).
 const CONTEXT_WEIGHT: f64 = 10.0;
+/// Picks after which a surface that outnumbers its rivals is the reading's
+/// answer in any clause ([`LearningCache::lookup_settled`]).
+const SETTLED_PICKS: u32 = 3;
 /// Separates contexts in the TSV column (never typed as text).
 const CONTEXT_SEP: char = '\u{1f}';
 
@@ -350,6 +353,20 @@ impl LearningCache {
             .iter()
             .filter(|e| e.contexts.iter().any(|c| last_clause(c) == clause))
             .max_by(|a, b| score(a, now).total_cmp(&score(b, now)))
+            .map(|e| e.surface.clone())
+    }
+
+    /// The surface picked for `reading` at least [`SETTLED_PICKS`] times and
+    /// more often than every other surface together: the user's settled
+    /// answer, whatever clause comes before (変体仮名 picked over and over
+    /// in ever-new sentences). A reading whose picks split between
+    /// homophones (歯医者 / 廃車) stays with [`Self::lookup_after_clause`].
+    pub fn lookup_settled(&self, reading: &str) -> Option<String> {
+        let entries = self.entries.get(reading)?;
+        let total: u32 = entries.iter().map(|e| e.frequency).sum();
+        entries
+            .iter()
+            .find(|e| e.frequency >= SETTLED_PICKS && e.frequency * 2 > total)
             .map(|e| e.surface.clone())
     }
 
@@ -1030,5 +1047,25 @@ mod tests {
             None
         );
         assert_eq!(cache.lookup_after_clause("はいしゃ", "。"), None);
+    }
+
+    #[test]
+    fn test_lookup_settled_needs_repeated_dominant_picks() {
+        let mut cache = LearningCache::new(LearningConfig::default());
+        cache.record("へんたいがな", "変体がな");
+        cache.record("へんたいがな", "変体仮名");
+        cache.record("へんたいがな", "変体仮名");
+        assert_eq!(cache.lookup_settled("へんたいがな"), None, "2 picks");
+        cache.record("へんたいがな", "変体仮名");
+        assert_eq!(
+            cache.lookup_settled("へんたいがな").as_deref(),
+            Some("変体仮名")
+        );
+        // Split between homophones: no settled answer.
+        for _ in 0..3 {
+            cache.record("はいしゃ", "歯医者");
+            cache.record("はいしゃ", "廃車");
+        }
+        assert_eq!(cache.lookup_settled("はいしゃ"), None);
     }
 }

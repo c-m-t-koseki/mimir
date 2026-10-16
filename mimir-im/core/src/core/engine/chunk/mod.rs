@@ -39,11 +39,12 @@ impl InputMethodEngine {
         // The phrase was committed before right after this same clause
         // (歯が痛いので + はいしゃ → 歯医者): show that, no inference. A
         // clause never seen with this reading (車が壊れたので + はいしゃ) is
-        // the model's call — it reads the context.
+        // the model's call — it reads the context — unless the user has
+        // settled on one answer for the reading (変体仮名).
         let learned = match &self.learning {
-            Some(cache) if self.input_buf.pending().is_empty() => {
-                cache.lookup_after_clause(&full_reading, &base_ctx)
-            }
+            Some(cache) if self.input_buf.pending().is_empty() => cache
+                .lookup_after_clause(&full_reading, &base_ctx)
+                .or_else(|| cache.lookup_settled(&full_reading)),
             _ => None,
         };
         self.live.learned = learned.is_some();
