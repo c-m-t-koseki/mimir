@@ -66,12 +66,14 @@ fn test_editing_scenarios() {
             "ykt_backspace_then_o",
             &[("ykt", "ykt"), ("⌫", "yk"), ("o", "yこ")],
         ),
-        // Deleting a kana takes the consonants stranded before it along
-        // (apple's `pl` became pぇ: no lone `p` is left behind)
+        // Deleting a small kana takes the consonants stranded before it
+        // along (apple's `pl` became pぇ: no lone `p` is left behind); a
+        // full kana leaves them
         (
-            "ytko_backspace_drops_stranded_consonants",
-            &[("ytko", "ytこ"), ("⌫", "∅")],
+            "ytko_backspace_keeps_stranded_consonants",
+            &[("ytko", "ytこ"), ("⌫", "yt")],
         ),
+        ("bra_backspace_keeps_b", &[("bra", "bら"), ("⌫", "b")]),
         (
             "apple_backspace_drops_stranded_p",
             &[("apple", "あっpぇ"), ("⌫", "あっ"), ("ka", "あっか")],
@@ -149,11 +151,11 @@ fn test_editing_scenarios() {
             "delete_separator_fires_sokuon",
             &[("yt1t", "yt1t"), ("←⌫", "yっt@2"), ("⇥o", "yっと")],
         ),
-        // A doubled consonant after a rule prefix keeps the prefix alive;
-        // deleting the っ takes the stranded prefix with it
+        // A doubled consonant after a rule prefix keeps the prefix alive,
+        // and deleting the っ leaves it, as deleting ら leaves bら's b
         (
             "prefixed_double_consonant_keeps_prefix",
-            &[("tyy", "tっy"), ("⌫", "tっ"), ("⌫", "∅")],
+            &[("tyy", "tっy"), ("⌫", "tっ"), ("⌫", "t"), ("⌫", "∅")],
         ),
         // Returning from conversion keeps the reading editable
         (
