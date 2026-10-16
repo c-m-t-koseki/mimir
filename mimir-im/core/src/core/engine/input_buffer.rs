@@ -27,9 +27,11 @@
 //! ending at the caret; backspace/delete remove one element and then
 //! evaluate the run the removal joined, so the result always equals
 //! typing the remaining keystrokes fresh: removing the `1` from `yt1t`
-//! evaluates `ytt` → 「yっt」. Backspace over a kana also removes the
-//! consonants stranded right before it (`apple` → 「あっpぇ」 → 「あっ」), so
-//! no lone consonant is left behind to read as a new keystroke.
+//! evaluates `ytt` → 「yっt」. Backspace over a small kana also removes
+//! the consonants stranded right before it (`apple` → 「あっpぇ」 → 「あっ」),
+//! so an English cluster split by an `l`/`x` rule leaves no lone consonant
+//! behind to read as a new keystroke; over a full kana they stay
+//! (`bra` → 「bら」 → 「b」).
 
 use mimir_engine::RomajiConverter;
 
@@ -121,16 +123,18 @@ impl InputBuffer {
     /// keystrokes fresh (`yt1t` minus the `1` → 「yっt」). Returns false
     /// when the caret is at the start.
     ///
-    /// Removing a kana takes the consonants stranded right before it too
-    /// (あっpぇ → あっ, not あっp): they were typed with it (`apple`'s `pl`
-    /// became pぇ), and left alone they would read as a new keystroke.
+    /// Removing a small kana takes the consonants stranded right before it
+    /// too (あっpぇ → あっ, not あっp): an English cluster split by an
+    /// `l`/`x` rule (`apple`'s `pl` became pぇ), and left alone they would
+    /// read as a new keystroke. A full kana leaves them (bら → b): they
+    /// were typed on their own.
     pub fn backspace(&mut self, romaji: &RomajiConverter) -> bool {
         if self.cursor == 0 {
             return false;
         }
         self.cursor -= 1;
         let removed = self.elements.remove(self.cursor);
-        if !removed.is_romaji() && mimir_engine::contains_kana(&removed.ch().to_string()) {
+        if !removed.is_romaji() && is_small_kana(removed.ch()) {
             while self.cursor > 0 && self.elements[self.cursor - 1].is_romaji() {
                 self.cursor -= 1;
                 self.elements.remove(self.cursor);
@@ -317,6 +321,10 @@ impl InputBuffer {
     pub fn reading_cursor(&self) -> usize {
         self.cursor - self.active_run().len()
     }
+}
+
+fn is_small_kana(c: char) -> bool {
+    "ぁぃぅぇぉゃゅょゎゕゖァィゥェォャュョヮヵヶ".contains(c)
 }
 
 /// Settle one Romaji run into `out` and clear it.
